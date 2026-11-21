@@ -196,6 +196,46 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => { ensureStyles() }, [])
 
+      React.useEffect(() => {
+        const side = () => rootRef.current && rootRef.current.querySelector('.sst-side')
+        let card = null
+        const stop = () => { if (card && card.parentElement) card.remove(); card = null }
+        const tick = async () => {
+          if (!side()) return
+          let runs = []
+          try { runs = (await api('GET', '/fsm?portId=' + (active || ''))).runs || [] } catch { runs = [] }
+          if (!runs.length) { stop(); return }
+          if (!card || !card.parentElement) {
+            card = document.createElement('div')
+            card.className = 'sst-sec sst-fsm'
+            side().appendChild(card)
+          }
+          const run = runs[0]
+          const st = run.status || {}
+          card.innerHTML = '<h4>状态机</h4>'
+          const head = document.createElement('div')
+          head.className = 'sst-fsm-state'
+          head.textContent = st.state + (run.alive ? '' : '（已停）')
+          card.appendChild(head)
+          for (const name of (st.events || [])) {
+            const b = document.createElement('button')
+            b.className = 'sst-fsm-event'
+            b.textContent = name
+            b.onclick = () => api('POST', '/fsm/event', { runId: run.runId, name }).catch(() => {})
+            card.appendChild(b)
+          }
+          const sb = document.createElement('button')
+          sb.className = 'sst-fsm-stop'
+          sb.textContent = '停止'
+          sb.onclick = () => api('POST', '/fsm/stop', { runId: run.runId }).then(stop).catch(() => {})
+          card.appendChild(sb)
+        }
+        tick()
+        const t = setInterval(tick, 1500)
+        return () => { clearInterval(t); stop() }
+      }, [active])
+
+
       // DSH renders the chat composer under every conversation view. When our
       // view is the visible one, hide it so the panel owns the full height.
       React.useEffect(() => {
