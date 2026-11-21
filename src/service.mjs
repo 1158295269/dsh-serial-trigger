@@ -9,7 +9,7 @@
 import { Hub, TOPIC } from './hub.mjs';
 import { LineAssembler } from './lines.mjs';
 import { KIND } from './codec.mjs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';
@@ -33,6 +33,19 @@ export class SerialService {
     this.backend = opts.backend || createSerialBackend();
     // portId -> who took it over; a replaced port must not silently keep working
     this.replaced = new Map();
+    // Runtime-tunable settings; cordis config seeds them, serial_config updates them.
+    this.settings = {
+      idleLeaseMs: opts.idleLeaseMs ?? 30 * 60 * 1000,
+      defaultLineEnding: opts.defaultLineEnding || 'any',
+      scanRoots: opts.scanRoots || [opts.workspaceRoot || process.cwd()],
+      ...(opts.settings || {}),
+    };
+    this.onSettingsChange = typeof opts.onSettingsChange === 'function' ? opts.onSettingsChange : null;
+    this._leaseTimer = null;
+    if (this.settings.idleLeaseMs > 0) {
+      this._leaseTimer = setInterval(() => { this.reapIdle().catch(() => {}); }, 60000);
+      if (typeof this._leaseTimer.unref === 'function') this._leaseTimer.unref();
+    }
     // Scan scripts live in the workspace; the plugin keeps no registry.
     this.scanRunner = opts.runner || new ScanRunner({
       nodePath: opts.nodePath,
@@ -288,6 +301,7 @@ export class SerialService {
         retryable: false,
       });
     }
+    rec.lastActivity = Date.now();
     const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
     if (rec.transport) await rec.transport.write(bytes);
     this.hub.publishData(portId, { dir: 1, bytes, tMonoUs: Math.round(performance.now() * 1000), tWallMs: Date.now() });
@@ -298,6 +312,7 @@ export class SerialService {
   async tail(opts) {
     const { portId, maxLines = 200, timeoutMs = 0 } = opts;
     const rec = this.ports.get(portId);
+    if (rec) rec.lastActivity = Date.now();
     if (!rec) throw new SerialError('E_PORT_NOT_FOUND', 'no such portId ' + portId, { hint: 'The portId is unknown or already closed. serial_ports() lists what is open right now.', fix: ['serial_ports()', 'serial_open({port})'] });
     const cur = this.cursors.get(portId);
     const mode = ['any', 'crlf', 'lf'].includes(opts.lineEnding) ? opts.lineEnding : 'any';
@@ -393,13 +408,14 @@ export class SerialService {
    * belongs to the workspace, so it can be reviewed, diffed and re-run without
    * the plugin owning a registry.
    */
-  async scan(captureId, { script, label, timeoutMs } = {}) {
+  async scan(captureId, { script, label, timeoutMs, signal } = {}) {
     const loaded = await this.scanRunner.load(script);
     const name = label ? String(label) : loaded.label;
     const run = await this.scanRunner.start({
       source: loaded.source,
       ctx: { captureId, script: loaded.path },
       timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_TIMEOUT_MS,
+      signal,
     });
     let scanned = 0;
     try {
@@ -495,8 +511,56 @@ export class SerialService {
     return closed;
   }
 
+  /** Read or update the runtime settings that serial_config exposes. */
+  config({ set } = {}) {
+    if (set && typeof set === 'object') {
+      if ('idleLeaseMs' in set) {
+        this.settings.idleLeaseMs = Math.max(0, Number(set.idleLeaseMs) || 0);
+        if (this._leaseTimer) { clearInterval(this._leaseTimer); this._leaseTimer = null; }
+        if (this.settings.idleLeaseMs > 0) {
+          this._leaseTimer = setInterval(() => { this.reapIdle().catch(() => {}); }, 60000);
+          if (typeof this._leaseTimer.unref === 'function') this._leaseTimer.unref();
+        }
+      }
+      if ('defaultLineEnding' in set && ['any', 'crlf', 'lf'].includes(set.defaultLineEnding)) {
+        this.settings.defaultLineEnding = set.defaultLineEnding;
+      }
+      if ('scanRoots' in set) {
+        const roots = Array.isArray(set.scanRoots) ? set.scanRoots.filter(Boolean) : [];
+        if (roots.length) {
+          this.settings.scanRoots = roots.map(String);
+          this.scanRunner.roots = this.settings.scanRoots.map((r) => resolve(r));
+        }
+      }
+    }
+    if (this.onSettingsChange) {
+      try { this.onSettingsChange({ ...this.settings }); } catch { /* persistence is best-effort */ }
+    }
+    return { ...this.settings, portsOpen: [...this.ports.values()].filter((r) => r.state === 'open').length };
+  }
+
+  /** Close ports nobody has touched for longer than the lease. */
+  async reapIdle() {
+    const lease = Number(this.settings.idleLeaseMs) || 0;
+    if (lease <= 0) return [];
+    const closed = [];
+    const now = Date.now();
+    for (const [id, rec] of [...this.ports]) {
+      if (rec.state !== 'open') continue;
+      if (now - (rec.lastActivity || rec.started || now) < lease) continue;
+      await this.close(id, { force: true, reason: 'idle' }).then(() => closed.push(id)).catch(() => {});
+    }
+    return closed;
+  }
+
+  async cleanup(opts = {}) {
+    if (opts.planId) return this.store.applyCleanup(opts.planId);
+    return this.store.planCleanup(opts);
+  }
+
   /** Close every open port and drop cursors. Idempotent. */
   async dispose() {
+    if (this._leaseTimer) { clearInterval(this._leaseTimer); this._leaseTimer = null; }
     for (const [id, rec] of [...this.ports]) {
       if (rec.state === 'open' || rec.state === 'draining') await this.close(id).catch(() => {});
       this.hub.clearTap(id);
