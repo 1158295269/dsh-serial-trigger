@@ -244,13 +244,12 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 | `serial_export` | `{captureId,range?,format?,encoding?}` | 导出可读文本 |
 | `serial_config` | `{...}` | 读写设置（UI 前） |
 | `serial_cleanup` | `{dryRun,planId?}` | 两段式清理 |
-| `serial_rules_add` | `{name,source,timeoutMs?}` | 安装/更新规则，装前语法检查（v0.2） |
-| `serial_rules_list` | — | 列规则与上次运行结果（v0.2） |
-| `serial_rules_apply` | `{captureId,rules?,timeoutMs?}` | 对某次录制重扫，写故障点（v0.2） |
+| `serial_scan` | `{captureId,script,label?,timeoutMs?}` | 按路径读扫描脚本，扫录制，产出故障点（v0.2） |
 | `serial_marks` | `{captureId,rule?,severity?,include?}` | 读故障点，只返回引用（v0.2） |
 | `serial_bytes` | `{captureId,dir,offset,length,format?}` | 按引用取字节（v0.2） |
 
 状态机接口 `serial_fsm_*` 留 v0.3，触发器 `serial_trigger` 留 v0.4。
+扫描脚本由工作区管理：插件不保存、不注册、不规定放在哪。
 
 ---
 
@@ -361,33 +360,31 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 
 ---
 
-## 21. 规则与故障点（v0.2）
+## 21. 扫描脚本与故障点（v0.2）
 
 ### 21.1 定位
 
 不做日志规范。嵌入式日志本来就不规范，要求对方改固件等于把插件推到“说服别人改造”的位置。
 这一层只解决一件事：**抓到日志之后，谁能自动把可疑位置标出来，并且标得住**。
 
-四条原则：
+五条原则：
 
 | 原则 | 含义 |
 |---|---|
 | **引用给 Agent，渲染给人** | 工具返回字节区间，不返回猜好的文本；解码是 UI 的事 |
-| **Agent 只写规则，不参与打标** | 标记只能由规则脚本产出；Agent 无法在运行时随手标一个点 |
-| **重扫由调用方触发** | 不自动重扫；规则改了要重跑就显式跑 |
-| **字节优先** | 规则看到的是原始字节流，不是行。变长帧由规则自己切 |
+| **Agent 只写脚本，不参与打标** | 标记只能由脚本运行产出；Agent 无法在运行时随手标一个点 |
+| **插件不做规则管理** | 没有注册表、没有命名、没有生命周期；脚本属于工作区的文件系统 |
+| **重扫由调用方触发** | 不自动重扫；脚本改了要重跑就显式跑 |
+| **字节优先** | 脚本看到的是原始字节流，不是行。变长帧由脚本自己切 |
 
-### 21.2 规则契约
+### 21.2 脚本契约
 
-规则是一个 ESM 模块，位置 `<workspace>/.serial/rules/<name>/rule.mjs`，同级放 `meta.json`。
-规则属于**工作区**：它编码的是这个工程的协议知识，应当跟工程的 git 仓库一起走，而不是留在插件或录制目录里。
-解析顺序：`settings.rulesRoot` → `settings.workspaceRoot + '/.serial/rules'` → `process.cwd() + '/.serial/rules'`。
+扫描脚本是**工作区里的普通文件**，由 Agent 用常规写文件工具创建、由人审阅、由 git 管理。
+插件只在 `serial_scan` 时按路径读取一次，**不保存、不登记、不解析名字**。
 
 ```js
-export const meta = { name: 'frame-length-mismatch', version: 1, description: '长度字段与实收不符' }
-
 export function createScanner(ctx) {
-  // ctx = { captureId, port, baud }
+  // ctx = { captureId, script }
   let carry = Buffer.alloc(0)
   return {
     record(rec) {   // rec = { t, monoUs, dir: 'rx'|'tx', offset, data: Buffer }
@@ -405,23 +402,24 @@ export function createScanner(ctx) {
 }
 ```
 
-输入记录里的 `offset` 是**该方向流内的绝对字节偏移**，规则可以直接用 `rec.offset + i` 定位，不必自己累加。
-字节流没有行概念，是否切行、怎么切，完全由规则决定。
+- `offset` 是**该方向流内的绝对字节偏移**，脚本用 `rec.offset + i` 定位，不必自己累加
+- 字节流没有行概念，切不切行、怎么切，完全由脚本决定
+- 脚本必须位于工作区内（`settings.scanRoots`，默认 `process.cwd()`）；越界直接拒绝
 
 ### 21.3 沙箱
 
-规则是 Agent 写的代码，必须假定它可能出错甚至是恶意的。
+脚本是 Agent 写的代码，必须假定它可能出错甚至是恶意的。
 
 ```
-宿主 ──spawn──► node --permission --max-old-space-size=512 -e "<bootstrap>"
-                      │  规则源码通过 stdin 传入，子进程零文件权限
-                      └─ vm.runInNewContext(源码, { 仅 console })
+宿主 ──spawn──► node --permission --allow-fs-read=<sandbox-child.cjs> sandbox-child.cjs
+                      │  脚本源码通过 stdin 传入，不落盘子进程读取
+                      └─ vm 上下文只有 Buffer 与静默 console
 ```
 
 | 层 | 作用 | 实测 |
 |---|---|---|
 | 子进程 | 崩溃、死循环不影响宿主；到点 kill | 已验证 |
-| `--permission`（不给任何 allow） | 文件系统全封 | 读文件返回 `ERR_ACCESS_DENIED` |
+| `--permission` + 单一文件放行 | 除沙箱自身外无任何文件权限 | 读其它文件返回 `ERR_ACCESS_DENIED` |
 | `vm` 上下文 | 不暴露 `process` / `require` / `fetch` | 网络路径被切断 |
 
 **为什么不用 Python**：开箱即用。DSH 宿主自带 Node，用户不需要额外装运行时。
@@ -432,7 +430,7 @@ export function createScanner(ctx) {
 ```js
 {
   id: 'mk-7f3a91',
-  rule: 'frame-length-mismatch',
+  rule: 'frame-length-mismatch',            // 脚本文件名，或调用方给的 label
   anchor: { dir: 'rx', offset: 0x20F4, length: 21 },   // 字节区间
   t: 1795164352672,
   kind: 'fault',                 // fault | state | note
@@ -448,64 +446,36 @@ export function createScanner(ctx) {
 约束：
 
 - `anchor` 只存字节区间，**不存文本**
-- `code` **不含行号**（行号随改代码漂移），只有绝对路径 + 符号名
-- `id = sha1(rule + dir + offset + label 前 32 字)`，重扫幂等
+- `code` **不含行号**，只有绝对路径 + 符号名
+- `id = sha1(label + dir + offset + label 前 32 字)`，重扫幂等
 - 所有路径必须是绝对路径
 
 ### 21.5 存储
 
 ```
 <dataRoot>/<project>/<captureId>.slog                     原始证据，永不修改
-<dataRoot>/<project>/<captureId>.marks/<rule>.jsonl       该规则产出的标记
-<workspace>/.serial/rules/<name>/rule.mjs                 规则源码（跟工程走）
-<workspace>/.serial/rules/<name>/meta.json                规则元信息
+<dataRoot>/<project>/<captureId>.marks/<label>.jsonl      首行 meta（脚本路径、扫描时间），其后是标记
+<workspace>/.../*.mjs                                     扫描脚本，由工作区自行管理
 ```
 
-一条规则一个文件：删文件即撤销该规则的全部标记，互不影响。
+一个脚本一份标记文件：重跑覆盖同一文件，删文件即撤销该次扫描的结果。
 
 ### 21.6 接口
 
 | 工具 | 行为 |
 |---|---|
-| `serial_rules_add` | 装规则；先做语法检查，失败直接拒绝 |
-| `serial_rules_list` | 列规则、版本、上次运行的时间与产出条数 |
-| `serial_rules_apply` | 解码 `.slog` → 字节流喂给规则 → 收标记 → 写 `.marks/<rule>.jsonl` |
-| `serial_marks` | 只返回标记与窗口**引用** |
+| `serial_scan` | 按路径读脚本 → 解码 `.slog` → 字节流喂给脚本 → 写 `.marks/<label>.jsonl` |
+| `serial_marks` | 返回标记、窗口**引用**、以及 `sources`（脚本路径，供重跑） |
 | `serial_bytes` | 按 `{dir,offset,length}` 取字节，`format` 取 `hex` / `text` / `base64` |
 
 `serial_marks` 返回形态：
 
 ```js
 {
-  marks: [ /* 21.4 的结构 */ ],
-  window: { dir: 'rx', offset: 0x1F80, length: 0x1A0 }   // 只给区间，不给内容
+  marks: [ /* 21.4 的结构，带 window 引用 */ ],
+  sources: [{ label, script, scannedAt }],
 }
 ```
-
-### 21.7 面板
-
-- 侧栏“故障点”：按 severity 分组，显示 `label`、规则名、时间
-- 日志区时间轴小旗，颜色对应 severity
-- “只看故障点”过滤
-- 点击跳到对应字节，按当前断行/编码**解码渲染**
-- 展开显示 `code.file` / `code.symbol` / `hypothesis` / `next`
-
-### 21.8 默认值
-
-| 项 | 值 |
-|---|---|
-| 规则超时 | 20 秒（`timeoutMs` 可覆盖，由调用方判断） |
-| 子进程内存 | 512 MB |
-| `serial_bytes` 单次上限 | 8 KB，超出截断并标 `truncated` |
-| 自动重扫 | **无** |
-
-### 21.9 明确不做
-
-- 不做运行时插入标记（抓取路径保持纯净，只写原始字节）
-- 不预置“异常关键词”表（识别规则完全由 Agent 现场定义）
-- 不在标记里存行号或文本片段
-
----
 
 ## 22. 状态机中间件（v0.3，规划）
 

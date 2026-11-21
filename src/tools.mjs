@@ -192,61 +192,23 @@ export function createTools(service) {
       },
     },
     {
-      name: 'serial_rules_add',
-      description: '安装或更新一条规则。规则是 JS 模块，导出 createScanner(ctx)，在沙箱子进程里跑，只看到字节流。装完要用 serial_rules_apply 才会产出故障点。',
-      parameters: {
-        type: 'object',
-        properties: {
-          name: { type: 'string', description: '规则名，[a-z0-9._-]，也是标记文件的文件名' },
-          source: { type: 'string', description: '完整模块源码：export function createScanner(ctx){ return { record(rec){...}, finish(){...} } }' },
-          meta: { type: 'object', description: '可选，{ description, version }' },
-        },
-        required: ['name', 'source'],
-        additionalProperties: false,
-      },
-      async execute(args) {
-        if (!args || !args.name || !args.source) return badArg('name and source are required');
-        try { return ok(await service.rulesAdd(args)); } catch (e) { return fail(e); }
-      },
-    },
-    {
-      name: 'serial_rules_list',
-      description: '列出已安装的规则。',
-      parameters: { type: 'object', properties: {}, additionalProperties: false },
-      async execute() {
-        try { return ok(await service.rulesList()); } catch (e) { return fail(e); }
-      },
-    },
-    {
-      name: 'serial_rules_remove',
-      description: '删除一条规则。已产出的标记不会被自动清理。',
-      parameters: {
-        type: 'object',
-        properties: { name: { type: 'string' } },
-        required: ['name'],
-        additionalProperties: false,
-      },
-      async execute(args) {
-        if (!args || !args.name) return badArg('name is required');
-        try { return ok(await service.rulesRemove(args.name)); } catch (e) { return fail(e); }
-      },
-    },
-    {
-      name: 'serial_rules_apply',
-      description: '对某次录制重扫规则，产出故障点。不传 rules 则跑全部已安装规则。每次调用都会覆盖该规则上次的标记。',
+      name: 'serial_scan',
+      description: '用一个扫描脚本扫某个录制，产出故障点。脚本是工作区里的 .mjs 文件，导出 createScanner(ctx)，只看到字节流；插件不保存规则，脚本怎么管理由工作区决定。',
       parameters: {
         type: 'object',
         properties: {
           captureId: { type: 'string' },
-          rules: { type: 'array', items: { type: 'string' }, description: '只跑这几条，省略则全部' },
-          timeoutMs: { type: 'number', description: '单条规则超时，默认 20000' },
+          script: { type: 'string', description: '脚本绝对路径或相对工作区的路径，必须在工作区内' },
+          label: { type: 'string', description: '标记归属名，默认取脚本文件名' },
+          timeoutMs: { type: 'number', description: '默认 20000' },
         },
-        required: ['captureId'],
+        required: ['captureId', 'script'],
         additionalProperties: false,
       },
       async execute(args) {
         if (!args || !args.captureId) return badArg('captureId is required');
-        try { return ok(await service.rulesApply(args.captureId, args)); } catch (e) { return fail(e); }
+        if (!args.script) return badArg('script is required: pass the path of a .mjs scan script');
+        try { return ok(await service.scan(args.captureId, args)); } catch (e) { return fail(e); }
       },
     },
     {
