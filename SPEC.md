@@ -379,8 +379,9 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 
 ### 21.2 规则契约
 
-规则是一个 ESM 模块，位置 `<dataRoot>/rules/<name>/rule.mjs`，同级放 `meta.json`。
-规则跟录制放在同一棵树里：一起备份、一起迁移，不在 DSH 配置档里留私有状态。
+规则是一个 ESM 模块，位置 `<workspace>/.serial/rules/<name>/rule.mjs`，同级放 `meta.json`。
+规则属于**工作区**：它编码的是这个工程的协议知识，应当跟工程的 git 仓库一起走，而不是留在插件或录制目录里。
+解析顺序：`settings.rulesRoot` → `settings.workspaceRoot + '/.serial/rules'` → `process.cwd() + '/.serial/rules'`。
 
 ```js
 export const meta = { name: 'frame-length-mismatch', version: 1, description: '长度字段与实收不符' }
@@ -456,8 +457,8 @@ export function createScanner(ctx) {
 ```
 <dataRoot>/<project>/<captureId>.slog                     原始证据，永不修改
 <dataRoot>/<project>/<captureId>.marks/<rule>.jsonl       该规则产出的标记
-<dataRoot>/rules/<name>/rule.mjs                          规则源码（与录制同树）
-<dataRoot>/rules/<name>/meta.json                         规则元信息
+<workspace>/.serial/rules/<name>/rule.mjs                 规则源码（跟工程走）
+<workspace>/.serial/rules/<name>/meta.json                规则元信息
 ```
 
 一条规则一个文件：删文件即撤销该规则的全部标记，互不影响。
