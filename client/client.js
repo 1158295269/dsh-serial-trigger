@@ -32,6 +32,13 @@ window.__ModuleLoader__.load({
       '.sst-rowsel{background:#eef4ff}',
       '.sst-hit{background:#ffe9a8}',
       '.sst-find{background:#fff7dd}',
+      '.sst-mark{padding:6px 10px;border-radius:8px;cursor:pointer;font-size:12px;border-left:3px solid transparent}',
+      '.sst-mark:hover{background:#f3f5f8}',
+      '.sst-mark .a{color:#2b313a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+      '.sst-mark .b{display:flex;justify-content:space-between;color:#98a0ab;font-size:11px;margin-top:2px}',
+      '.sst-sev-error{border-left-color:#e5484d}',
+      '.sst-sev-warn{border-left-color:#f2a33c}',
+      '.sst-sev-info{border-left-color:#4b8bf5}',
       '.sst-modal{position:fixed;inset:0;background:rgba(20,24,30,.28);display:flex;align-items:center;justify-content:center;z-index:80}',
       '.sst-dialog{background:#fff;border-radius:12px;padding:18px;width:380px;box-shadow:0 20px 50px rgba(20,24,30,.25)}',
       '.sst-dialog h3{margin:0 0 4px;font-size:14px}',
@@ -165,6 +172,9 @@ window.__ModuleLoader__.load({
       const [toast, setToast] = React.useState('')
       const [mode, setMode] = React.useState('live')
       const [historyMeta, setHistoryMeta] = React.useState(null)
+      const [marks, setMarks] = React.useState([])
+      const [onlyMarks, setOnlyMarks] = React.useState(false)
+      const [rescanning, setRescanning] = React.useState(false)
       const [capMenu, setCapMenu] = React.useState(null)
       const [exportDlg, setExportDlg] = React.useState(null)
       const [query, setQuery] = React.useState('')
@@ -306,7 +316,10 @@ window.__ModuleLoader__.load({
       }
 
       const [draft, setDraft] = React.useState('')
-      const visible = filter === 'all' ? lines : lines.filter((l) => l.dir === filter)
+      const baseVisible = filter === 'all' ? lines : lines.filter((l) => l.dir === filter)
+      const visible = onlyMarks && marks.length
+        ? baseVisible.filter((l) => marks.some((m) => Math.abs((l.t || 0) - (m.t || 0)) <= 1000))
+        : baseVisible
 
       const rowAt = (offsetY) => {
         const row = Math.max(0, offsetY) / ROW
@@ -345,6 +358,27 @@ window.__ModuleLoader__.load({
         if (!l) return
         setToast((await copyToClipboard(escapeText(l.text))) ? '已复制为转义文本' : '复制失败')
       }
+      const jumpToMark = (mark) => {
+        const idx = visible.findIndex((l) => (l.t || 0) >= (mark.t || 0))
+        if (idx < 0) { setToast('标记时间不在当前视图'); return }
+        setFollow(false)
+        if (logRef.current) logRef.current.scrollTop = (layout.tops[idx] || 0) * ROW
+        setToast(mark.label || '故障点')
+      }
+
+      const rescan = async () => {
+        if (!historyMeta) return
+        setRescanning(true)
+        try {
+          const res = await api('POST', '/rules/apply', { captureId: historyMeta.id })
+          const summary = (res.results || []).map((r) => r.rule + ':' + r.marks).join('  ')
+          const m = await api('GET', '/marks?captureId=' + encodeURIComponent(historyMeta.id))
+          setMarks(m.marks || [])
+          setToast('重扫完成 ' + summary)
+        } catch (e) { setToast(String(e.message || e)) }
+        setRescanning(false)
+      }
+
       const copyQuote = async (i) => {
         setMenu(null)
         const l = visible[i]
@@ -386,6 +420,11 @@ window.__ModuleLoader__.load({
           setFollow(false)
           setMatches([])
           setMatchIdx(-1)
+          if (res.lines) setLines(res.lines)
+          try {
+            const m = await api('GET', '/marks?captureId=' + encodeURIComponent(cap.id))
+            setMarks(m.marks || [])
+          } catch (e) { setMarks([]) }
           setToast('已打开录制（只读）')
         } catch (e) { setToast(String(e.message || e)) }
       }
@@ -503,6 +542,24 @@ window.__ModuleLoader__.load({
                 h('button', { className: 'sst-btn primary', onClick: doExport }, '导出'))))
         : null
 
+      const marksNode = mode === 'history'
+        ? h('div', { className: 'sst-sec' },
+            h('h4', null, '故障点 ' + (marks.length ? '(' + marks.length + ')' : '')),
+            marks.length === 0
+              ? h('div', { className: 'sst-meta' }, '没有标记，先点右上角「重扫规则」')
+              : marks.slice(0, 40).map((m, i) =>
+                  h('div', {
+                    key: m.id || i,
+                    className: 'sst-mark sst-sev-' + (m.severity || 'warn'),
+                    title: (m.hypothesis || '') + (m.code && m.code.symbol ? '\n' + m.code.file + ' :: ' + m.code.symbol : ''),
+                    onClick: () => jumpToMark(m),
+                  },
+                    h('div', { className: 'a' }, m.label),
+                    h('div', { className: 'b' },
+                      h('span', null, m.rule),
+                      h('span', null, new Date(m.t || Date.now()).toLocaleTimeString())))))
+        : null
+
       const menuNode = menu
         ? h('div', { className: 'sst-menu', style: { left: menu.x, top: menu.y } },
             h('button', { onClick: copySelection }, '复制选中内容'),
@@ -536,6 +593,7 @@ window.__ModuleLoader__.load({
                   h('div', { className: 'a' }, activeMeta.captureId || (activeMeta.port + ' · 录制中')),
                   h('div', { className: 'b' }, h('span', null, fmtBytes(activeMeta.bytesRx)), h('span', null, activeMeta.state)))
               : h('div', { className: 'sst-meta' }, '未在录制')),
+          marksNode,
           h('div', { className: 'sst-sec' }, h('h4', null, '最近录制'),
             (state.captures || []).slice(0, 8).map((cap) =>
               h('div', {
@@ -579,7 +637,9 @@ window.__ModuleLoader__.load({
             tab === 'log' && matches.length > 0 ? h('span', { className: 'sst-meta' }, (matchIdx + 1) + '/' + matches.length) : null,
             tab === 'log' ? h('button', { className: 'sst-btn', onClick: () => runSearch(-1) }, '↑') : null,
             tab === 'log' ? h('button', { className: 'sst-btn', onClick: () => runSearch(1) }, '↓') : null,
-            mode === 'history' ? h('button', { className: 'sst-chip on', onClick: () => { setMode('live'); setHistoryMeta(null); setLines([]); setMatches([]); setMatchIdx(-1) } }, '返回实时') : null,
+            mode === 'history' ? h('button', { className: 'sst-chip' + (onlyMarks ? ' on' : ''), onClick: () => setOnlyMarks(!onlyMarks) }, '只看故障点') : null,
+            mode === 'history' ? h('button', { className: 'sst-btn', onClick: rescan, disabled: rescanning }, rescanning ? '重扫中…' : '重扫规则') : null,
+            mode === 'history' ? h('button', { className: 'sst-chip on', onClick: () => { setMode('live'); setHistoryMeta(null); setLines([]); setMatches([]); setMatchIdx(-1); setMarks([]) } }, '返回实时') : null,
             h('span', { className: 'sst-grow' }),
             tab === 'log' ? h('label', { className: 'sst-meta' },
               h('input', { type: 'checkbox', checked: follow, onChange: (e) => setFollow(e.target.checked) }), ' 跟随') : null,
