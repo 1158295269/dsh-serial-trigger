@@ -11,7 +11,7 @@
  */
 import { DatabaseSync } from 'node:sqlite';
 import { mkdir, readdir, stat, unlink, writeFile, rename, readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, createWriteStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname, basename } from 'node:path';
 import { SlogWriter, SlogReader, KIND } from './codec.mjs';
@@ -216,12 +216,14 @@ export class Store {
         }
         ring.push({ line: lineNo, text: line.text });
         if (ring.length > 32) ring.shift();
+        if (hits.length >= max) return false;   // enough: stop reading
       }
+      return undefined;
     });
-    return hits.slice(0, max);
+    return hits;
   }
 
-  /** Export a capture. Formats: text | hex | csv | jsonl. Never mutates the .slog. */
+  /** Export a capture. Formats: text | hex | csv | jsonl. Streams to disk, never buffers the file. */
   async exportCapture(captureId, opts = {}) {
     const row = this.db.prepare('SELECT path FROM captures WHERE id = ?').get(captureId);
     if (!row) throw new SerialError('E_NO_SUCH_CAPTURE', 'no capture with id ' + captureId, { hint: 'Call serial_captures() first.', fix: ['serial_captures({keyword})'] });
@@ -234,58 +236,83 @@ export class Store {
     const reader = await SlogReader.open(row.path);
     const la = new LineAssembler({ encoding, lineEnding: 'any' });
     const decoder = new TextDecoder(encoding, { fatal: false });
-    const chunks = [];
     const hhmmss = (ms) => new Date(ms).toISOString().slice(11, 23);
     const csvCell = (v) => '"' + String(v).replace(/"/g, '""') + '"';
 
-    if (format === 'csv') chunks.push('time_iso,mono_us,dir,kind,text,hex\n');
-
-    await reader.scan((rec) => {
-      if (format === 'hex') {
-        const b = rec.bytes;
-        for (let i = 0; i < b.length; i += 16) {
-          const slice = b.subarray(i, i + 16);
-          const hex = [...slice].map((x) => x.toString(16).padStart(2, '0')).join(' ');
-          const ascii = [...slice].map((x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : '.')).join('');
-          chunks.push((rec.offset + i).toString(16).padStart(8, '0') + '  ' + hex.padEnd(47) + '  |' + ascii + '|\n');
-        }
-        return;
-      }
-
-      const dir = rec.kind === KIND.RX ? 'rx' : rec.kind === KIND.TX ? 'tx' : 'ev';
-      const text = format === 'text' ? null : decoder.decode(rec.bytes);
-
-      if (format === 'jsonl') {
-        chunks.push(JSON.stringify({
-          t: new Date(rec.tWallMs).toISOString(), mono_us: rec.tMonoUs, dir, kind: rec.kind,
-          hex: Buffer.from(rec.bytes).toString('hex'), text,
-        }) + '\n');
-        return;
-      }
-
-      if (format === 'csv') {
-        chunks.push([new Date(rec.tWallMs).toISOString(), rec.tMonoUs, dir, rec.kind, csvCell(text.replace(/\r?\n/g, '\\n')), Buffer.from(rec.bytes).toString('hex')].join(',') + '\n');
-        return;
-      }
-
-      if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return;
-      for (const line of la.feed(rec)) {
-        const prefix = timestamps ? '[' + hhmmss(line.tWallMs) + '] ' : '';
-        chunks.push(prefix + (rec.kind === KIND.TX ? '>> ' : '') + line.text + '\n');
-      }
-    });
-
-    const body = chunks.join('');
-    try {
-      await import('node:fs/promises').then((m) => m.writeFile(ioPath(outPath), body, 'utf8'));
-    } catch (err) {
-      throw new SerialError('E_CAPTURE_IO', 'cannot write export to ' + outPath + ': ' + (err && err.message), {
+    const stream = createWriteStream(ioPath(outPath), { encoding: 'utf8' });
+    // A write stream reports open/write failures asynchronously: race every write
+    // against the error event so a bad path cannot look like a success.
+    const failed = new Promise((_, reject) => stream.on('error', reject));
+    failed.catch(() => {});
+    let bytes = 0;
+    let lines = 0;
+    const emit = (text) => {
+      bytes += Buffer.byteLength(text, 'utf8');
+      lines += 1;
+      const written = new Promise((resolve) => {
+        if (stream.write(text)) return resolve();
+        stream.once('drain', resolve);
+      });
+      return Promise.race([written, failed]);
+    };
+    const fail = (err) => {
+      try { stream.destroy(); } catch { /* gone */ }
+      if (err instanceof SerialError) return err;
+      return new SerialError('E_CAPTURE_IO', 'cannot write export to ' + outPath + ': ' + (err && err.message), {
         hint: 'The target folder is read-only, on a disconnected drive, or blocked by another process.',
         fix: ['choose another out path', 'check folder permissions', 'retry'],
         retryable: true,
       });
+    };
+
+    try {
+      if (format === 'csv') await emit('time_iso,mono_us,dir,kind,text,hex\n');
+
+      await reader.scan(async (rec) => {
+        if (format === 'hex') {
+          const b = rec.bytes;
+          for (let i = 0; i < b.length; i += 16) {
+            const slice = b.subarray(i, i + 16);
+            const hex = [...slice].map((x) => x.toString(16).padStart(2, '0')).join(' ');
+            const ascii = [...slice].map((x) => (x >= 32 && x < 127 ? String.fromCharCode(x) : '.')).join('');
+            await emit((rec.offset + i).toString(16).padStart(8, '0') + '  ' + hex.padEnd(47) + '  |' + ascii + '|\n');
+          }
+          return undefined;
+        }
+
+        const dir = rec.kind === KIND.RX ? 'rx' : rec.kind === KIND.TX ? 'tx' : 'ev';
+        const text = format === 'text' ? null : decoder.decode(rec.bytes);
+
+        if (format === 'jsonl') {
+          await emit(JSON.stringify({
+            t: new Date(rec.tWallMs).toISOString(), mono_us: rec.tMonoUs, dir, kind: rec.kind,
+            hex: Buffer.from(rec.bytes).toString('hex'), text,
+          }) + '\n');
+          return undefined;
+        }
+
+        if (format === 'csv') {
+          await emit([new Date(rec.tWallMs).toISOString(), rec.tMonoUs, dir, rec.kind, csvCell(text.replace(/\r?\n/g, '\\n')), Buffer.from(rec.bytes).toString('hex')].join(',') + '\n');
+          return undefined;
+        }
+
+        if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return undefined;
+        let n = 0;
+        for (const line of la.feed(rec)) {
+          const prefix = timestamps ? '[' + hhmmss(line.tWallMs) + '] ' : '';
+          await emit(prefix + (rec.kind === KIND.TX ? '>> ' : '') + line.text + '\n');
+          n += 1;
+          if ((n & 1023) === 0) await new Promise((r) => setImmediate(r));
+        }
+        return undefined;
+      });
+
+      await Promise.race([new Promise((resolve) => stream.end(resolve)), failed]);
+    } catch (err) {
+      throw fail(err);
     }
-    return { path: outPath, format, bytes: Buffer.byteLength(body, 'utf8'), lines: chunks.length };
+
+    return { path: outPath, format, bytes, lines };
   }
 
   /** Absolute path of a capture file. */
@@ -298,10 +325,7 @@ export class Store {
     return row.path;
   }
 
-  /**
-   * Walk a capture and yield data records with per-direction byte offsets.
-   * This is the contract the rule engine consumes: timestamps plus raw bytes.
-   */
+  /** Walk a capture and yield data records with per-direction byte offsets. */
   async scanCapture(captureId, onRecord, opts = {}) {
     const path = this.capturePath(captureId);
     const wantDirs = opts.dirs || ['rx', 'tx'];
@@ -309,9 +333,9 @@ export class Store {
     let offsetTx = 0;
     const reader = await SlogReader.open(path);
     await reader.scan((rec) => {
-      if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return;
+      if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return undefined;
       const dir = rec.kind === KIND.TX ? 'tx' : 'rx';
-      if (!wantDirs.includes(dir)) return;
+      if (!wantDirs.includes(dir)) return undefined;
       const offset = dir === 'rx' ? offsetRx : offsetTx;
       if (dir === 'rx') offsetRx += rec.bytes.length; else offsetTx += rec.bytes.length;
       return onRecord({
@@ -329,19 +353,20 @@ export class Store {
     let have = 0;
     let actualStart = null;
     await this.scanCapture(captureId, (rec) => {
-      if (rec.dir !== dir || have >= want) return;
+      if (have >= want) return false;
       const end = rec.offset + rec.length;
-      if (end <= start) return;
+      if (end <= start) return undefined;
       if (actualStart === null) actualStart = rec.offset;
       const from = Math.max(0, start - rec.offset);
       const slice = rec.data.subarray(from, from + (want - have));
       parts.push(slice);
       have += slice.length;
+      return have >= want ? false : undefined;
     }, { dirs: [dir] });
     return { dir, offset: actualStart === null ? start : actualStart, length: have, data: Buffer.concat(parts), truncated: have >= want };
   }
 
-  /** Coarse (time -> byte offset) timeline used to turn a time window into a byte window. */
+  /** Coarse (time, offset) timeline used to turn a time window into a byte window. */
   async captureTimeline(captureId) {
     const out = [];
     await this.scanCapture(captureId, (rec) => {
@@ -350,10 +375,9 @@ export class Store {
     return out;
   }
 
-  /** Marks live beside the capture, one file per rule: delete the file, drop the marks. */
+  /** Marks live beside the capture, one file per scan. */
   marksDir(captureId) {
-    const path = this.capturePath(captureId);
-    return path.replace(/\.slog$/, '') + '.marks';
+    return this.capturePath(captureId).replace(/\.slog$/, '') + '.marks';
   }
 
   async writeMarks(captureId, label, marks, meta = {}) {
@@ -362,9 +386,8 @@ export class Store {
     const file = join(dir, label + '.jsonl');
     const lines = [JSON.stringify({ type: 'meta', label, ...meta })];
     for (const m of marks) lines.push(JSON.stringify(m));
-    const body = lines.join('\n') + '\n';
     const tmp = file + '.tmp';
-    await writeFile(ioPath(tmp), body, 'utf8');
+    await writeFile(ioPath(tmp), lines.join('\n') + '\n', 'utf8');
     await rename(ioPath(tmp), ioPath(file));
     return { file, count: marks.length };
   }
@@ -372,11 +395,7 @@ export class Store {
   async readMarks(captureId, { rule, severity } = {}) {
     const dir = this.marksDir(captureId);
     let files = [];
-    try {
-      files = await readdir(ioPath(dir));
-    } catch {
-      return [];
-    }
+    try { files = await readdir(ioPath(dir)); } catch { return { marks: [], sources: [] }; }
     const marks = [];
     const metas = [];
     for (const name of files) {
@@ -410,13 +429,19 @@ export class Store {
     const la = new LineAssembler({ lineEnding: opts.lineEnding || 'any' });
     const lines = [];
     let truncatedByCap = false;
-    await reader.scan((rec) => {
-      if (lines.length >= maxLines) { truncatedByCap = true; return; }
-      if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return;
+    let seen = 0;
+    await reader.scan(async (rec) => {
+      if (lines.length >= maxLines) { truncatedByCap = true; return false; }
+      if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return undefined;
       for (const line of la.feed(rec)) {
         if (lines.length >= maxLines) { truncatedByCap = true; break; }
         lines.push({ t: line.tWallMs, seq: line.seq, text: line.text, dir: rec.kind === KIND.TX ? 'tx' : 'rx' });
       }
+      // Yield per record: a single 4 KB record holds ~200 lines, so a line-based
+      // counter would never fire before the whole cap was reached.
+      seen += 1;
+      if ((seen & 7) === 0) await new Promise((r) => setImmediate(r));
+      return undefined;
     });
     for (const line of la.flush(Date.now())) {
       if (lines.length < maxLines) lines.push({ t: line.tWallMs, seq: line.seq, text: line.text, dir: 'rx' });
