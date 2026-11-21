@@ -10,7 +10,6 @@ import { Hub, TOPIC } from './hub.mjs';
 import { LineAssembler } from './lines.mjs';
 import { KIND } from './codec.mjs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';
@@ -24,7 +23,8 @@ export class SerialService {
     this.hub = opts.hub || new Hub(opts.hubOptions || {});
     this.store = opts.store;
     this.backend = opts.backend || createSerialBackend();
-    this.rulesRoot = opts.rulesRoot || join(homedir(), '.dsh', 'serial-trigger', 'rules');
+    // Rules belong with the captures, not in the DSH profile: same tree, same backup.
+    this.rulesRoot = opts.rulesRoot || join(this.store.root, 'rules');
     this.engine = opts.engine || new RuleEngine({ rulesRoot: this.rulesRoot, nodePath: opts.nodePath });
     this.config = opts.config || {};
     this.ports = new Map();      // portId -> record
