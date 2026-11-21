@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Store } from '../src/store.mjs';
@@ -76,4 +76,38 @@ test('R5 starting on a port owned by someone else is refused', async (t) => {
     () => h.service.fsmStart({ scenario: SCENARIO, portId: h.portId, owner: { kind: 'agent', id: 'intruder' } }),
     (err) => err.code === 'E_NOT_OWNER',
   );
+});
+
+
+test('R6 a scenario outside the workspace is refused', async (t) => {
+  const h = await harness();
+  t.after(h.cleanup);
+  const outside = join(tmpdir(), 'outside-' + Date.now() + '.json');
+  await writeFile(outside, JSON.stringify(SCENARIO), 'utf8');
+  t.after(() => rm(outside, { force: true }));
+  await assert.rejects(
+    () => h.service.fsmStart({ scenario: outside, portId: h.portId, owner: { kind: 'agent', id: 'a1' } }),
+    (err) => err.code === 'E_SCENARIO_OUTSIDE_WORKSPACE',
+  );
+});
+
+test('R7 trace entries say whether a send was simulated or executed', async (t) => {
+  const h = await harness();
+  t.after(h.cleanup);
+  const def = {
+    name: 'send-check', initial: 'a',
+    states: { a: { on: { 'event:go': { send: 'X\n', expect: 'line:/OK/', waitMs: 500, goto: 'b' } } }, b: { on: {} } },
+  };
+  const started = await h.service.fsmStart({ scenario: def, portId: h.portId, owner: { kind: 'agent', id: 'a1' } });
+  await h.service.fsmEvent(started.runId, 'go');
+  h.service.feed(h.portId, Buffer.from('OK\n'));
+  await sleep(120);
+  const st = h.service.fsmStatus(started.runId);
+  const entry = st.status.trace.find((x) => x.effects && x.effects.length);
+  assert.equal(entry.effects[0].status, 'executed');
+
+  const closed = await h.service.close(h.portId);
+  const sim = await h.service.fsmSimulate(closed.captureId, { scenario: def });
+  const fake = sim.trace.find((x) => x.effects && x.effects.length);
+  if (fake) assert.equal(fake.effects[0].status, 'simulated');
 });
