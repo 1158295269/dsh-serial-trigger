@@ -23,8 +23,8 @@ export class SerialService {
     this.hub = opts.hub || new Hub(opts.hubOptions || {});
     this.store = opts.store;
     this.backend = opts.backend || createSerialBackend();
-    // Rules belong with the captures, not in the DSH profile: same tree, same backup.
-    this.rulesRoot = opts.rulesRoot || join(this.store.root, 'rules');
+    // Rules are workspace assets: <workspace>/.serial/rules, overridable.
+    this.rulesRoot = opts.rulesRoot || join(opts.workspaceRoot || process.cwd(), '.serial', 'rules');
     this.engine = opts.engine || new RuleEngine({ rulesRoot: this.rulesRoot, nodePath: opts.nodePath });
     this.config = opts.config || {};
     this.ports = new Map();      // portId -> record

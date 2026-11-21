@@ -33,7 +33,10 @@ async function mount(ctx, settings) {
   const store = await Store.open({ root: dataRoot });
   await store.recover();
   const hub = new Hub({ ringBytes: settings.ringBytes || 8 << 20 });
-  const rulesRoot = settings.rulesRoot || join(dataRoot, 'rules');
+  // Rules belong to the workspace, not to the plugin or the capture tree:
+  // they encode this project's protocol knowledge and should travel with its git repo.
+  const workspaceRoot = settings.workspaceRoot || process.cwd();
+  const rulesRoot = settings.rulesRoot || join(workspaceRoot, '.serial', 'rules');
   const service = new SerialService({ hub, store, rulesRoot });
   if (settings.mockPorts) for (const p of settings.mockPorts) service.registerMockPort(p);
 
