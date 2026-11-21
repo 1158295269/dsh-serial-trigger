@@ -69,8 +69,9 @@ export function validateScenario(def) {
 }
 
 export class Machine {
-  constructor(def) {
+  constructor(def, opts = {}) {
     this.def = validateScenario(def);
+    this.mode = opts.simulated ? 'simulated' : 'executed';
     this.name = def.name || 'scenario';
     this.state = def.initial;
     this.enteredAt = 0;
@@ -93,7 +94,9 @@ export class Machine {
     this.enteredAt = now;
     this.pending = null;
     this._armAfter(now);
-    const entry = { at: now, from, to, via, note: note || '' };
+    const effects = this._send ? [{ type: 'send', text: this._send, status: this.mode }] : [];
+    this._send = null;
+    const entry = { at: now, from, to, via, note: note || '', effects };
     this.trace.push(entry);
     if (this.trace.length > MAX_TRACE) this.trace.shift();
     return entry;
@@ -106,6 +109,7 @@ export class Machine {
     }
     if (action.send) {
       this.actions.push({ type: 'send', text: action.send, at: now });
+      this._send = action.send;
       const m = action.expect ? compileMatcher(action.expect) : null;
       this.pending = {
         match: m,
@@ -195,7 +199,7 @@ export class Machine {
  * No I/O, no port — this is how a scenario is proven before touching hardware.
  */
 export function simulate(def, lines, opts = {}) {
-  const machine = new Machine(def);
+  const machine = new Machine(def, { simulated: true });
   const marks = [];
   const sends = [];
   const startAt = lines.length ? lines[0].t || 0 : Date.now();

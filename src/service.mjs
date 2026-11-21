@@ -9,7 +9,7 @@
 import { Hub, TOPIC } from './hub.mjs';
 import { LineAssembler } from './lines.mjs';
 import { KIND } from './codec.mjs';
-import { join, resolve } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';
@@ -563,9 +563,37 @@ export class SerialService {
 
   // --------------------------------------------------------------- state machine
 
+  /** Load a scenario from an object or a workspace file, with the same guard as scan scripts. */
+  async loadScenario(scenario) {
+    if (scenario && typeof scenario === 'object') return scenario;
+    if (typeof scenario !== 'string' || !scenario.trim()) {
+      throw new SerialError('E_BAD_SCENARIO', 'scenario must be an object or a path', { hint: 'Pass {path} or inline the JSON.' });
+    }
+    const abs = resolve(scenario);
+    const roots = (this.settings.scanRoots || [process.cwd()]).map((r) => resolve(r));
+    const inside = roots.some((r) => abs.toLowerCase() === r.toLowerCase() || abs.toLowerCase().startsWith(r.toLowerCase() + sep));
+    if (!inside) {
+      throw new SerialError('E_SCENARIO_OUTSIDE_WORKSPACE', 'scenario is outside the workspace: ' + abs, {
+        hint: 'Scenarios must live under a configured workspace root.',
+        fix: ['move the scenario into the workspace', 'serial_config({set:{scanRoots:[...]}})'],
+      });
+    }
+    if (!abs.toLowerCase().endsWith('.json')) {
+      throw new SerialError('E_BAD_SCENARIO', 'scenario must be a .json file', { fix: ['rename the file to *.fsm.json'] });
+    }
+    const st = await stat(abs).catch(() => null);
+    if (!st || !st.isFile()) {
+      throw new SerialError('E_NO_SUCH_SCENARIO', 'no such scenario: ' + abs, { fix: ['check the path'] });
+    }
+    if (st.size > 256 * 1024) {
+      throw new SerialError('E_BAD_SCENARIO', 'scenario is larger than 256KB', { fix: ['split the scenario'] });
+    }
+    return JSON.parse(await readFile(abs, 'utf8'));
+  }
+
   /** Offline: prove a scenario against a recording before touching hardware. */
   async fsmSimulate(captureId, { scenario, tailMs } = {}) {
-    const def = typeof scenario === 'string' ? JSON.parse(await import('node:fs/promises').then((m) => m.readFile(scenario, 'utf8'))) : scenario;
+    const def = await this.loadScenario(scenario);
     const { lines } = await this.store.readCaptureLines(captureId, { maxLines: 200000 });
     const out = simulate(def, lines, { tailMs });
     return { captureId, mode: 'simulate', ...out };
@@ -573,7 +601,7 @@ export class SerialService {
 
   /** Live: bind a machine to one port. One run per port, owner must hold the port. */
   async fsmStart({ scenario, portId, owner, timeoutMs } = {}) {
-    const def = typeof scenario === 'string' ? JSON.parse(await import('node:fs/promises').then((m) => m.readFile(scenario, 'utf8'))) : scenario;
+    const def = await this.loadScenario(scenario);
     const id = Number(portId);
     const rec = this.ports.get(id);
     if (!rec || rec.state !== 'open') {
