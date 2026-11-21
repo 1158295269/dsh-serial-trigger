@@ -475,6 +475,23 @@ export class SerialService {
     return this.store.exportCapture(captureId, opts);
   }
 
+  /**
+   * Release every port owned by one of these identities. Used when a session is
+   * archived or disposed: its ports must not outlive it.
+   */
+  async closeOwnedBy(ownerIds, reason = 'owner-gone') {
+    const wanted = new Set((ownerIds || []).filter(Boolean).map(String));
+    if (wanted.size === 0) return [];
+    const closed = [];
+    for (const [id, rec] of [...this.ports]) {
+      if (rec.state !== 'open') continue;
+      const owner = rec.owner;
+      if (!owner || !wanted.has(String(owner.id))) continue;
+      await this.close(id, { force: true, reason }).then(() => closed.push(id)).catch(() => {});
+    }
+    return closed;
+  }
+
   /** Close every open port and drop cursors. Idempotent. */
   async dispose() {
     for (const [id, rec] of [...this.ports]) {

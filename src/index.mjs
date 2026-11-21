@@ -22,7 +22,7 @@ export async function apply(ctx, settings = {}) {
   if (ctx && typeof ctx === 'object' && applied.has(ctx)) return;
   if (ctx && typeof ctx === 'object') applied.add(ctx);
   try {
-    await mount(ctx, settings || {});
+    return await mount(ctx, settings || {});
   } catch (error) {
     console.warn('serial-trigger: mount failed; the plugin stays dormant', error);
   }
@@ -46,10 +46,52 @@ async function mount(ctx, settings) {
   }
 
   mountRoutes(ctx, service, settings);
+  mountLifecycle(ctx, service);
   return { hub, store, service, dataRoot };
 }
 
 /** Panel API <-> node http. Kept dumb on purpose: dispatch() holds the logic. */
+/**
+ * Lifecycle: a port must never outlive the thing that opened it.
+ *
+ *  - session archived / disposed -> close every port owned by that session or
+ *    by agents that belong to it
+ *  - plugin unload / host shutdown -> close everything, flushing captures
+ */
+function mountLifecycle(ctx, service) {
+  if (typeof ctx.on === 'function') {
+    try {
+      ctx.on('session/disposed', (session) => {
+        const ids = new Set();
+        if (session && session.id) ids.add(String(session.id));
+        for (const key of ['agent', 'agentId']) {
+          const value = session && session[key];
+          if (value && value.id) ids.add(String(value.id));
+          else if (typeof value === 'string') ids.add(value);
+        }
+        if (session && Array.isArray(session.agents)) {
+          for (const a of session.agents) {
+            if (a && a.id) ids.add(String(a.id));
+          }
+        }
+        service.closeOwnedBy([...ids], 'session-disposed').catch((err) => {
+          console.warn('serial-trigger: releasing ports for a disposed session failed', err);
+        });
+      }, { global: true });
+    } catch (err) {
+      console.warn('serial-trigger: cannot subscribe to session/disposed; ports may outlive sessions', err);
+    }
+  }
+
+  if (typeof ctx.effect === 'function') {
+    ctx.effect(() => () => {
+      // Shutdown path: close and flush. Errors are swallowed on purpose; a failed
+      // close during teardown must not block the host from exiting.
+      service.dispose().catch(() => {});
+    }, 'serial-trigger: dispose ports on unload');
+  }
+}
+
 function mountRoutes(ctx, service, settings) {
   const routes = createApi(service, settings || {});
   // DSH's webserver keys routes by path only, so two methods on one path means

@@ -540,3 +540,17 @@ ctx.slots.register({ name: 'conversation.view', id: 'serial-trigger', order: 20,
 | 被接管后的旧 portId | `E_PORT_REPLACED`，附接管者与端口名 |
 
 `serial_ports` 每条返回 `owner` 与 `idleForMs`。
+
+
+### 23.4 生命周期
+
+端口不能比打开它的东西活得久。
+
+| 事件 | 处理 |
+|---|---|
+| 会话归档 / 关闭（`session/disposed`） | 关闭该会话及其 agent 拥有的全部端口，录制正常收尾 |
+| 插件卸载 / 宿主退出 | `service.dispose()`：关闭所有端口、flush 录制、清空游标 |
+| 端口被接管 | 原录制收尾，旧 `portId` 返回 `E_PORT_REPLACED` |
+
+实现位置：`src/index.mjs` 的 `mountLifecycle()`，订阅 `ctx.on('session/disposed', …, { global: true })`，
+并用 `ctx.effect` 注册卸载时的清理回调。
