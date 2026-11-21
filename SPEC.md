@@ -594,6 +594,7 @@ COM8 实测：心跳驱动转移、发送 PING 后等待 `ECHO PING` 才进入�
 | `SerialService.close` | 关闭端口前先停掉绑定在该端口上的状态机（`_stopRunsForPort`），机器不会挂在死环上继续跑 |
 | `serial_open`（工具） | 固定传 `autoTakeover:true` 与调用者身份 `{kind:'agent', id:exec.agent}`；子 agent 沿用父身份 |
 | `serial_send`（工具） | 带上调用者身份：非持有者得到 `E_NOT_OWNER`，提示先 `serial_open` 接管，而不是静默写入 |
+| `serial_close`（工具） | 同样按持有者校验：关掉别人的端口等于结束别人的录制，只能由持有者或接管来做 |
 | 面板 | 点他人端口 = 只读观看（不弹确认、不抢写）；发送框禁用并显示「只读 · 由 Agent 持有」；显式「接管写入」按钮才走 `takeover` |
 | 面板（被接管） | 自己的 portId 消失且同名端口换了主人时自动跟到新 portId，显示「已被接管 · 只读」，读数不中断 |
 | 面板（状态机卡片） | 只读态不渲染事件按钮：机器属于端口持有者，观众只能看 |

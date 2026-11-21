@@ -80,4 +80,11 @@ test('B4 the model path carries its own identity', async (t) => {
   const foreign = await byName.serial_send.execute({ portId: opened.data.portId, text: 'x' }, { agent: 'agent-8' });
   assert.equal(foreign.ok, false);
   assert.equal(foreign.error.code, 'E_NOT_OWNER');
+
+  // closing another agent's capture is the same kind of trespass
+  const foreignClose = await byName.serial_close.execute({ portId: opened.data.portId }, { agent: 'agent-8' });
+  assert.equal(foreignClose.ok, false);
+  assert.equal(foreignClose.error.code, 'E_NOT_OWNER');
+  const ownClose = await byName.serial_close.execute({ portId: opened.data.portId }, exec);
+  assert.equal(ownClose.ok, true);
 });

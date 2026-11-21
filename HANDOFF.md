@@ -10,8 +10,8 @@
 1. **模型自动接管**：`SerialService.open` 新增 `autoTakeover`；工具 `serial_open` 固定开启，
    被顶掉的端口先 `close(force, reason:'takeover')`，对方的录制正常收尾落盘。
 2. **状态机随端口结束**：`close()` 之前先 `_stopRunsForPort`，机器不会挂在死环上继续跑。
-3. **工具带身份**：`serial_open` / `serial_send` 传 `{kind:'agent', id:exec.agent}`，
-   子 agent 沿用父身份；非持有者写入得到 `E_NOT_OWNER`，不再静默写。
+3. **工具带身份**：`serial_open` / `serial_send` / `serial_close` 传 `{kind:'agent', id:exec.agent}`，
+   子 agent 沿用父身份；非持有者写入或关闭得到 `E_NOT_OWNER`，不再静默生效。
 4. **面板只读态**：点他人端口 = 只读观看（不弹确认、不抢写），发送框禁用，
    标签「只读 · 由 Agent 持有」；要写必须点「接管写入」。
 5. **被接管可感知**：自己的 portId 消失且同名端口换了主人时，自动跟到新 portId，

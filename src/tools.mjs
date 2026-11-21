@@ -85,9 +85,11 @@ export function createTools(service) {
       name: 'serial_close',
       description: '关闭串口并落盘。返回该次录制的文件路径、字节数与行数。',
       parameters: { type: 'object', properties: { portId: { type: 'number' } }, required: ['portId'], additionalProperties: false },
-      async execute(args) {
+      async execute(args, exec) {
         if (!args || typeof args.portId !== 'number') return badArg('portId is required');
-        try { return ok(await service.close(args.portId)); } catch (e) { return fail(e); }
+        // Closing ends someone's recording, so it is owner-gated like writing.
+        // A takeover (serial_open) is the sanctioned way to end another's capture.
+        try { return ok(await service.close(args.portId, { owner: ownerOf(exec) })); } catch (e) { return fail(e); }
       },
     },
     {
