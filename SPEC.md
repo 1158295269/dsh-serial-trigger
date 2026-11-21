@@ -314,6 +314,8 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 
 ---
 
+> 版本管理与提交规范见 [GIT.md](GIT.md)。
+
 ## 19. 真串口（M6，部分完成）
 
 `serialport@13.0.0` 已接入，适配层在 `src/serial-backend.mjs`，服务通过 `backend` 注入（测试可换假实现）。
