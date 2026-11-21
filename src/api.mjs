@@ -18,6 +18,18 @@ const bad = (code, message, hint, extra = {}) => ({
 
 export function createApi(service, settings = {}) {
   const routes = {
+    'GET /serial/fsm': async (ctx) => {
+      const portId = Number((/portId=(\d+)/.exec((ctx && ctx.url) || '') || [])[1]) || null;
+      return ok({ runs: service.fsmList(portId) });
+    },
+    'POST /serial/fsm/event': async (ctx) => {
+      const body = (ctx && ctx.body) || {};
+      return ok(await service.fsmEvent(String(body.runId), String(body.name)));
+    },
+    'POST /serial/fsm/stop': async (ctx) => {
+      const body = (ctx && ctx.body) || {};
+      return ok(await service.fsmStop(String(body.runId)));
+    },
     'GET /serial/state': async () => {
       const ports = typeof service.discoverPorts === 'function' ? await service.discoverPorts() : service.listPorts();
       const captures = await service.captures({ limit: 20 });
