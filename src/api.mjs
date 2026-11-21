@@ -59,7 +59,10 @@ export function createApi(service, settings = {}) {
       }
       const eol = { cr: '\r', lf: '\n', crlf: '\r\n' }[body.append];
       if (eol) payload = Buffer.concat([payload, Buffer.from(eol, 'utf8')]);
-      const res = await service.send(portId, payload);
+      const res = await service.send(portId, payload, {
+        owner: body.sessionId ? { kind: 'session', id: String(body.sessionId) } : undefined,
+        force: body.force === true,
+      });
       return ok({ ok: true, ...res });
     },
 

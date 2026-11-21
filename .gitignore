@@ -2,6 +2,7 @@
 node_modules/
 
 # local scratch data from test runs
+test/ui/out/
 .tmp-data/
 *.log
 
