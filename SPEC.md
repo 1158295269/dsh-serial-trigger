@@ -244,8 +244,13 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 | `serial_export` | `{captureId,range?,format?,encoding?}` | 导出可读文本 |
 | `serial_config` | `{...}` | 读写设置（UI 前） |
 | `serial_cleanup` | `{dryRun,planId?}` | 两段式清理 |
+| `serial_rules_add` | `{name,source,timeoutMs?}` | 安装/更新规则，装前语法检查（v0.2） |
+| `serial_rules_list` | — | 列规则与上次运行结果（v0.2） |
+| `serial_rules_apply` | `{captureId,rules?,timeoutMs?}` | 对某次录制重扫，写故障点（v0.2） |
+| `serial_marks` | `{captureId,rule?,severity?,include?}` | 读故障点，只返回引用（v0.2） |
+| `serial_bytes` | `{captureId,dir,offset,length,format?}` | 按引用取字节（v0.2） |
 
-触发器 `serial_trigger` 留 v0.2。
+状态机接口 `serial_fsm_*` 留 v0.3，触发器 `serial_trigger` 留 v0.4。
 
 ---
 
@@ -259,7 +264,10 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 | M4 ✅ | `replay` 回放源 | **已完成**：按 tMonoUs 节奏回放，无硬件可用（e2e 内验证） |
 | M5 ✅ | 工具层（接回放） | **已完成**：8 个工具 + 统一 ok/error 外壳，模拟 agent 全流程通过 |
 | M6 | 真串口（`serialport`） | 阻塞：需要硬件 |
-| M7 | UI（面板 + 路由） | **下一轮**：先于 M6 |
+| M7 ✅ | UI（面板 + 路由） | **已完成**：日志 / Hex / 统计、搜索、只读历史、导出四格式 |
+| M8 | 规则与故障点（v0.2） | 见第 21 节 |
+| M9 | 状态机中间件（v0.3） | 见第 22 节 |
+| M10 | 故障注入 + 黄金轨迹（v0.4） | 待定 |
 
 ---
 
@@ -350,3 +358,177 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 | E 8 次开合后句柄数不变、索引齐全 | 没有 fd 泄漏，每次录制都正确收尾 |
 
 `bin/firmware-conformance.mjs` 是另一回事（PING/BURST/ECHO 那套），用来给固件做合格检查，跟插件质量无关，别混用。
+
+---
+
+## 21. 规则与故障点（v0.2）
+
+### 21.1 定位
+
+不做日志规范。嵌入式日志本来就不规范，要求对方改固件等于把插件推到“说服别人改造”的位置。
+这一层只解决一件事：**抓到日志之后，谁能自动把可疑位置标出来，并且标得住**。
+
+四条原则：
+
+| 原则 | 含义 |
+|---|---|
+| **引用给 Agent，渲染给人** | 工具返回字节区间，不返回猜好的文本；解码是 UI 的事 |
+| **Agent 只写规则，不参与打标** | 标记只能由规则脚本产出；Agent 无法在运行时随手标一个点 |
+| **重扫由调用方触发** | 不自动重扫；规则改了要重跑就显式跑 |
+| **字节优先** | 规则看到的是原始字节流，不是行。变长帧由规则自己切 |
+
+### 21.2 规则契约
+
+规则是一个 ESM 模块，位置 `<profile>/serial-trigger/rules/<name>/rule.mjs`，同级放 `meta.json`。
+
+```js
+export const meta = { name: 'frame-length-mismatch', version: 1, description: '长度字段与实收不符' }
+
+export function createScanner(ctx) {
+  // ctx = { captureId, port, baud }
+  let carry = Buffer.alloc(0)
+  return {
+    record(rec) {   // rec = { t, monoUs, dir: 'rx'|'tx', offset, data: Buffer }
+      carry = Buffer.concat([carry, rec.data])
+      const marks = []
+      while (carry.length >= 4) {
+        const declared = carry.readUInt16LE(0)
+        if (carry.length < declared + 4) break
+        carry = carry.subarray(4 + declared)
+      }
+      return marks
+    },
+    finish() { return [] },
+  }
+}
+```
+
+输入记录里的 `offset` 是**该方向流内的绝对字节偏移**，规则可以直接用 `rec.offset + i` 定位，不必自己累加。
+字节流没有行概念，是否切行、怎么切，完全由规则决定。
+
+### 21.3 沙箱
+
+规则是 Agent 写的代码，必须假定它可能出错甚至是恶意的。
+
+```
+宿主 ──spawn──► node --permission --max-old-space-size=512 -e "<bootstrap>"
+                      │  规则源码通过 stdin 传入，子进程零文件权限
+                      └─ vm.runInNewContext(源码, { 仅 console })
+```
+
+| 层 | 作用 | 实测 |
+|---|---|---|
+| 子进程 | 崩溃、死循环不影响宿主；到点 kill | 已验证 |
+| `--permission`（不给任何 allow） | 文件系统全封 | 读文件返回 `ERR_ACCESS_DENIED` |
+| `vm` 上下文 | 不暴露 `process` / `require` / `fetch` | 网络路径被切断 |
+
+**为什么不用 Python**：开箱即用。DSH 宿主自带 Node，用户不需要额外装运行时。
+**为什么是子进程而不是进程内 vm**：`node:vm` 不是安全边界，进程隔离才是。
+
+### 21.4 标记结构
+
+```js
+{
+  id: 'mk-7f3a91',
+  rule: 'frame-length-mismatch',
+  anchor: { dir: 'rx', offset: 0x20F4, length: 21 },   // 字节区间
+  t: 1795164352672,
+  kind: 'fault',                 // fault | state | note
+  severity: 'error',             // error | warn | info
+  label: '长度字段声明 512，超出上限',
+  code: { file: 'C:/proj/fw/src/proto.c', symbol: 'parse_frame' },
+  hypothesis: '长度字段未做上限校验',
+  next: [{ label: '若下一帧仍错 → 缓冲区未复位' }],
+  extra: { declared: 512, received: 17 },
+}
+```
+
+约束：
+
+- `anchor` 只存字节区间，**不存文本**
+- `code` **不含行号**（行号随改代码漂移），只有绝对路径 + 符号名
+- `id = sha1(rule + dir + offset + label 前 32 字)`，重扫幂等
+- 所有路径必须是绝对路径
+
+### 21.5 存储
+
+```
+<dataRoot>/<project>/<captureId>.slog                     原始证据，永不修改
+<dataRoot>/<project>/<captureId>.marks/<rule>.jsonl       该规则产出的标记
+<profile>/serial-trigger/rules/<name>/rule.mjs            规则源码
+<profile>/serial-trigger/rules/<name>/meta.json           规则元信息
+```
+
+一条规则一个文件：删文件即撤销该规则的全部标记，互不影响。
+
+### 21.6 接口
+
+| 工具 | 行为 |
+|---|---|
+| `serial_rules_add` | 装规则；先做语法检查，失败直接拒绝 |
+| `serial_rules_list` | 列规则、版本、上次运行的时间与产出条数 |
+| `serial_rules_apply` | 解码 `.slog` → 字节流喂给规则 → 收标记 → 写 `.marks/<rule>.jsonl` |
+| `serial_marks` | 只返回标记与窗口**引用** |
+| `serial_bytes` | 按 `{dir,offset,length}` 取字节，`format` 取 `hex` / `text` / `base64` |
+
+`serial_marks` 返回形态：
+
+```js
+{
+  marks: [ /* 21.4 的结构 */ ],
+  window: { dir: 'rx', offset: 0x1F80, length: 0x1A0 }   // 只给区间，不给内容
+}
+```
+
+### 21.7 面板
+
+- 侧栏“故障点”：按 severity 分组，显示 `label`、规则名、时间
+- 日志区时间轴小旗，颜色对应 severity
+- “只看故障点”过滤
+- 点击跳到对应字节，按当前断行/编码**解码渲染**
+- 展开显示 `code.file` / `code.symbol` / `hypothesis` / `next`
+
+### 21.8 默认值
+
+| 项 | 值 |
+|---|---|
+| 规则超时 | 20 秒（`timeoutMs` 可覆盖，由调用方判断） |
+| 子进程内存 | 512 MB |
+| `serial_bytes` 单次上限 | 8 KB，超出截断并标 `truncated` |
+| 自动重扫 | **无** |
+
+### 21.9 明确不做
+
+- 不做运行时插入标记（抓取路径保持纯净，只写原始字节）
+- 不预置“异常关键词”表（识别规则完全由 Agent 现场定义）
+- 不在标记里存行号或文本片段
+
+---
+
+## 22. 状态机中间件（v0.3，规划）
+
+### 22.1 要解决的问题
+
+Agent 一次思考几秒到几十秒，而设备状态机的窗口可能只有几十毫秒。让模型逐字节参与必然错过时序。
+所以：**模型当规划者，状态机当执行者**。
+
+### 22.2 形态
+
+- 状态图用 **JSON 声明**（可静态校验、可离线模拟）
+- 编解码钩子留 **JS 沙箱**（与 21.3 同一套），v0.3.1 再加
+- 事件源只有两个：串口字节、`.slog` 回放；Agent 只负责“换模式 / 启停”
+- **离线模拟器为必做项**：同一份脚本先对着录制跑，验证通过再上真机
+
+### 22.3 接口
+
+| 工具 | 行为 |
+|---|---|
+| `serial_fsm_start` | 加载脚本、校验、进入初始态 |
+| `serial_fsm_event` | 注入事件（切换模式） |
+| `serial_fsm_wait` | 长轮询：到终态或超时才返回，返回转移轨迹 |
+| `serial_fsm_status` | 当前状态、允许的事件、已过时间 |
+
+### 22.4 与故障点的联动
+
+状态机卡在某状态超时 → 自动产出一条 `fault` 标记（走 21.4 的同一结构），
+Agent 下次读 `serial_marks` 就能看到“卡在哪一步、当时的字节是什么”，不需要重新抓。
