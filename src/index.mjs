@@ -17,12 +17,17 @@ export const name = 'serial-trigger';
 export const inject = ['tools'];
 
 const applied = new WeakSet();
+// cordis treats the value returned by apply() as an effect, so apply must return
+// nothing. Tests read the live mount through this accessor instead.
+let lastMount = null;
+export function currentMount() { return lastMount; }
 
 export async function apply(ctx, settings = {}) {
   if (ctx && typeof ctx === 'object' && applied.has(ctx)) return;
   if (ctx && typeof ctx === 'object') applied.add(ctx);
   try {
-    return await mount(ctx, settings || {});
+    lastMount = await mount(ctx, settings || {});
+    return undefined;
   } catch (error) {
     console.warn('serial-trigger: mount failed; the plugin stays dormant', error);
   }
@@ -41,8 +46,16 @@ async function mount(ctx, settings) {
   if (settings.mockPorts) for (const p of settings.mockPorts) service.registerMockPort(p);
 
   for (const tool of createTools(service)) {
-    if (typeof ctx.effect === 'function') ctx.effect(() => ctx.tools.register(tool), 'serial-trigger: ' + tool.name);
-    else ctx.tools.register(tool);
+    if (typeof ctx.effect === 'function') {
+      // ctx.effect requires the callback to return a disposer (or nothing).
+      // tools.register does not always do that, so normalise it.
+      ctx.effect(() => {
+        const stop = ctx.tools.register(tool);
+        return typeof stop === 'function' ? stop : () => {};
+      }, 'serial-trigger: ' + tool.name);
+    } else {
+      ctx.tools.register(tool);
+    }
   }
 
   mountRoutes(ctx, service, settings);
@@ -83,12 +96,18 @@ function mountLifecycle(ctx, service) {
     }
   }
 
-  if (typeof ctx.effect === 'function') {
-    ctx.effect(() => () => {
-      // Shutdown path: close and flush. Errors are swallowed on purpose; a failed
-      // close during teardown must not block the host from exiting.
-      service.dispose().catch(() => {});
-    }, 'serial-trigger: dispose ports on unload');
+  // Shutdown path: close and flush. Errors are swallowed on purpose; a failed
+  // close during teardown must not block the host from exiting.
+  //
+  // NOTE: ctx.effect() expects the callback to return a disposer; returning a
+  // factory that yields one trips cordis' "Invalid effect" check. The dispose
+  // event is the supported teardown hook.
+  if (typeof ctx.on === 'function') {
+    try {
+      ctx.on('dispose', () => { service.dispose().catch(() => {}); });
+    } catch (err) {
+      console.warn('serial-trigger: cannot register the dispose hook', err);
+    }
   }
 }
 
