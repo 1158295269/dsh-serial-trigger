@@ -33,7 +33,8 @@ async function mount(ctx, settings) {
   const store = await Store.open({ root: dataRoot });
   await store.recover();
   const hub = new Hub({ ringBytes: settings.ringBytes || 8 << 20 });
-  const service = new SerialService({ hub, store });
+  const rulesRoot = settings.rulesRoot || join(dataRoot, 'rules');
+  const service = new SerialService({ hub, store, rulesRoot });
   if (settings.mockPorts) for (const p of settings.mockPorts) service.registerMockPort(p);
 
   for (const tool of createTools(service)) {
