@@ -18,11 +18,21 @@ export { SerialError };
 
 let nextPortId = 1;
 
+/** Human-readable owner for error messages. */
+export function describeOwner(owner) {
+  if (!owner) return 'another caller';
+  if (owner.kind === 'session') return 'session ' + owner.id;
+  if (owner.kind === 'agent') return 'agent ' + owner.id;
+  return String(owner.kind || 'another caller');
+}
+
 export class SerialService {
   constructor(opts) {
     this.hub = opts.hub || new Hub(opts.hubOptions || {});
     this.store = opts.store;
     this.backend = opts.backend || createSerialBackend();
+    // portId -> who took it over; a replaced port must not silently keep working
+    this.replaced = new Map();
     // Scan scripts live in the workspace; the plugin keeps no registry.
     this.scanRunner = opts.runner || new ScanRunner({
       nodePath: opts.nodePath,
@@ -38,7 +48,7 @@ export class SerialService {
   listPorts() {
     const out = [];
     for (const [id, rec] of this.ports) {
-      out.push({ portId: id, port: rec.name, baudRate: rec.baud, state: rec.state, captureId: rec.captureId, path: rec.path, bytesRx: rec.bytesRx, bytesTx: rec.bytesTx });
+      out.push({ portId: id, port: rec.name, baudRate: rec.baud, state: rec.state, captureId: rec.captureId, path: rec.path, bytesRx: rec.bytesRx, bytesTx: rec.bytesTx, owner: rec.owner, idleForMs: Date.now() - (rec.lastActivity || rec.started || Date.now()) });
     }
     for (const name of this.mockPorts) {
       if (!this.byName.has(name)) out.push({ portId: null, port: name, state: 'available', mock: true });
@@ -99,13 +109,19 @@ export class SerialService {
 
   async open(opts) {
     const { port, baudRate = 115200, project = 'default', conversation = 'session', sessionId = '' } = opts;
+    const owner = opts.owner || { kind: 'agent', id: 'unknown' };
     const existing = this.byName.get(port);
-    if (existing && this.ports.get(existing)?.state === 'open') {
-      throw new SerialError('E_PORT_BUSY', port + ' is already open by this conversation', {
-        hint: 'Close it first with serial_close, or use serial_tail on the existing portId ' + existing + '.',
-        fix: ['serial_close({portId:' + existing + '})', 'or reuse portId ' + existing],
-        retryable: false,
-      });
+    const held = existing === undefined ? null : this.ports.get(existing);
+    if (held && held.state === 'open') {
+      if (!opts.takeover) {
+        throw new SerialError('E_PORT_BUSY', port + ' is already open by ' + describeOwner(held.owner), {
+          hint: 'Another session or agent is using it. Read-only access works through serial_tail on portId ' + existing + '; to seize it, pass takeover:true (their capture is closed cleanly first).',
+          fix: ['serial_tail({portId:' + existing + '}) to read only', 'serial_open({port, takeover:true}) to take over'],
+          retryable: false,
+        });
+      }
+      await this.close(existing, { force: true, reason: 'takeover' });
+      this.replaced.set(existing, { by: owner, at: Date.now(), port });
     }
 
     const cap = opts.record === false
@@ -116,6 +132,7 @@ export class SerialService {
       id: portId, name: port, baud: baudRate, state: 'open',
       captureId: cap.captureId, path: cap.path, writer: cap.writer,
       bytesRx: 0, bytesTx: 0, lines: 0, started: Date.now(),
+      owner, lastActivity: Date.now(),
     };
     this.ports.set(portId, rec);
     this.byName.set(port, portId);
@@ -176,8 +193,23 @@ export class SerialService {
     }
   }
 
-  async close(portId) {
+  async close(portId, opts = {}) {
     const rec = this.ports.get(portId);
+    const replaced = this.replaced.get(portId);
+    if (replaced && opts.reason !== 'takeover') {
+      throw new SerialError('E_PORT_REPLACED', 'portId ' + portId + ' was taken over by ' + describeOwner(replaced.by), {
+        hint: 'Another caller seized this port (' + replaced.port + '). Your capture was closed cleanly; re-open the port if you still need it.',
+        fix: ['serial_ports() to see the new owner', 'serial_open({port:' + replaced.port + '}) to start over'],
+        retryable: false,
+      });
+    }
+    if (rec && opts.owner && rec.owner && rec.owner.id !== opts.owner.id && !opts.force) {
+      throw new SerialError('E_NOT_OWNER', 'portId ' + portId + ' belongs to ' + describeOwner(rec.owner), {
+        hint: 'Only the owner may close it. Read-only access stays available through serial_tail; pass force:true to close anyway.',
+        fix: ['serial_tail({portId:' + portId + '}) to read only', 'serial_close({portId, force:true}) to override'],
+        retryable: false,
+      });
+    }
     if (!rec) throw new SerialError('E_PORT_NOT_FOUND', 'no such portId ' + portId, { hint: 'The portId is unknown or already closed. serial_ports() lists what is open right now.', fix: ['serial_ports()', 'serial_open({port})'] });
     if (rec.state === 'closed' || rec.state === 'draining') return { portId, already: true };
     rec.state = 'draining';
@@ -242,10 +274,17 @@ export class SerialService {
     });
   }
 
-  async send(portId, payload) {
+  async send(portId, payload, opts = {}) {
     const rec = this.ports.get(portId);
     if (!rec) throw new SerialError('E_PORT_NOT_FOUND', 'no such portId ' + portId, { hint: 'The portId is unknown or the port was closed. Call serial_ports() to see open ports, or serial_open() to start a new one.', fix: ['serial_ports()', 'serial_open({port})'] });
     if (rec.state !== 'open') throw new SerialError('E_PORT_NOT_OPEN', 'port ' + rec.name + ' is ' + rec.state, { hint: 'The port is ' + rec.state + '; reopen it before sending.', fix: ['serial_open({port})'], retryable: true });
+    if (opts.owner && rec.owner && rec.owner.id !== opts.owner.id && !opts.force) {
+      throw new SerialError('E_NOT_OWNER', 'portId ' + portId + ' belongs to ' + describeOwner(rec.owner), {
+        hint: 'Reads are open to everyone; writing requires ownership. Pass force:true if you mean to write anyway.',
+        fix: ['serial_tail({portId:' + portId + '}) to watch', 'serial_send({portId, text, force:true}) to override'],
+        retryable: false,
+      });
+    }
     const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
     if (rec.transport) await rec.transport.write(bytes);
     this.hub.publishData(portId, { dir: 1, bytes, tMonoUs: Math.round(performance.now() * 1000), tWallMs: Date.now() });
