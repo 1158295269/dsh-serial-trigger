@@ -158,3 +158,11 @@ test('A8 export supports text, hex, csv and jsonl', async (t) => {
   assert.equal(first.dir, 'rx');
   assert.ok(first.hex.startsWith('616c706861'));
 });
+
+
+test('A9 every route path is unique (the webserver keys by path)', async () => {
+  const routes = createApi({ discoverPorts: async () => [], listCaptures: () => [] }, {});
+  const paths = Object.keys(routes).map((k) => k.split(' ')[1]);
+  const dupes = paths.filter((p, i) => paths.indexOf(p) !== i);
+  assert.deepEqual(dupes, [], 'duplicate paths: ' + dupes.join(', '));
+});

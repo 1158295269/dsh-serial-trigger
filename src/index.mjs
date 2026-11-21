@@ -48,6 +48,17 @@ async function mount(ctx, settings) {
 /** Panel API <-> node http. Kept dumb on purpose: dispatch() holds the logic. */
 function mountRoutes(ctx, service, settings) {
   const routes = createApi(service, settings || {});
+  // DSH's webserver keys routes by path only, so two methods on one path means
+  // the second registration is rejected. Catch it here with a useful message.
+  const byPath = new Map();
+  for (const key of Object.keys(routes)) {
+    const [method, path] = key.split(' ');
+    if (!byPath.has(path)) byPath.set(path, []);
+    byPath.get(path).push(method);
+  }
+  for (const [path, methods] of byPath) {
+    if (methods.length > 1) console.warn('serial-trigger: ' + path + ' is registered for ' + methods.join(' and ') + '; the webserver keys by path, so all but one will fail. Split the paths.');
+  }
   const attach = (webServer) => {
     if (!webServer || typeof webServer.register !== 'function') return;
     for (const key of Object.keys(routes)) {
