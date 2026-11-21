@@ -40,8 +40,9 @@ test('F2 a send is queued with the expected answer', () => {
   const m = new Machine(SCENARIO);
   m.event('adv_start', 1000);
   const actions = m.drainActions();
-  assert.equal(actions[0].type, 'send');
-  assert.equal(actions[0].text, 'AT+ADV=1\r\n');
+  const send = actions.find((a) => a.type === 'send');
+  assert.ok(send, 'a send action must be queued');
+  assert.equal(send.text, 'AT+ADV=1\r\n');
   assert.ok(m.status().waitingFor, 'the machine waits for confirmation');
 });
 

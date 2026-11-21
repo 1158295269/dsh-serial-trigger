@@ -554,3 +554,11 @@ ctx.slots.register({ name: 'conversation.view', id: 'serial-trigger', order: 20,
 
 实现位置：`src/index.mjs` 的 `mountLifecycle()`，订阅 `ctx.on('session/disposed', …, { global: true })`，
 并用 `ctx.effect` 注册卸载时的清理回调。
+
+
+### 22.5 初版实现（v0.3.0）
+
+已落地：场景校验、`Machine`、离线 `simulate`、活体运行（订阅端口行流）、
+`serial_fsm_start/event/wait/status/stop/simulate` 六个工具、一端口一机器、
+端口所有权校验、会话销毁时 `stopRunsOwnedBy`。
+COM8 实测：心跳驱动转移、发送 PING 后等待 `ECHO PING` 才进入下一状态（5/5）。

@@ -272,6 +272,94 @@ export function createTools(service) {
         try { return ok(await service.bytes(args.captureId, args)); } catch (e) { return fail(e); }
       },
     },
+    {
+      name: 'serial_fsm_start',
+      description: '在一个已打开的端口上启动状态机（活体）。一个端口只允许一个状态机；发送必须声明期望回执和目标状态，场景里已强制。',
+      parameters: {
+        type: 'object',
+        properties: {
+          portId: { type: 'number' },
+          scenario: { type: 'object', description: '场景对象，或传 { path } 指向工作区的 JSON 场景文件' },
+        },
+        required: ['portId', 'scenario'],
+        additionalProperties: false,
+      },
+      async execute(args, exec) {
+        if (!args || !Number.isFinite(Number(args.portId))) return badArg('portId is required');
+        if (!args.scenario) return badArg('scenario is required');
+        try {
+          const scenario = typeof args.scenario === 'string' ? args.scenario : (args.scenario.path || args.scenario);
+          return ok(await service.fsmStart({ scenario, portId: args.portId, owner: ownerOf(exec) }));
+        } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_fsm_simulate',
+      description: '对着某次录制离线跑状态机，验证脚本后再上真机。不碰端口、不发数据。',
+      parameters: {
+        type: 'object',
+        properties: {
+          captureId: { type: 'string' },
+          scenario: { type: 'object' },
+          tailMs: { type: 'number', description: '记录结束后再推进多少毫秒，用于触发 after 定时器' },
+        },
+        required: ['captureId', 'scenario'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.captureId || !args.scenario) return badArg('captureId and scenario are required');
+        try {
+          const scenario = typeof args.scenario === 'string' ? args.scenario : (args.scenario.path || args.scenario);
+          return ok(await service.fsmSimulate(args.captureId, { scenario, tailMs: args.tailMs }));
+        } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_fsm_event',
+      description: '向状态机注入事件（切换操作模式）。',
+      parameters: {
+        type: 'object',
+        properties: { runId: { type: 'string' }, name: { type: 'string' } },
+        required: ['runId', 'name'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.runId || !args.name) return badArg('runId and name are required');
+        try { return ok(await service.fsmEvent(args.runId, args.name)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_fsm_wait',
+      description: '长轮询：等状态机产生下一次转移，或超时返回当前状态。',
+      parameters: {
+        type: 'object',
+        properties: { runId: { type: 'string' }, timeoutMs: { type: 'number', description: '默认 5000' } },
+        required: ['runId'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.runId) return badArg('runId is required');
+        try { return ok(await service.fsmWait(args.runId, args)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_fsm_status',
+      description: '查看状态机当前状态、允许的事件与最近轨迹。',
+      parameters: { type: 'object', properties: { runId: { type: 'string' } }, required: ['runId'], additionalProperties: false },
+      async execute(args) {
+        if (!args || !args.runId) return badArg('runId is required');
+        try { return ok(service.fsmStatus(args.runId)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_fsm_stop',
+      description: '停止状态机，把过程中产生的标记写入录制的 .marks。',
+      parameters: { type: 'object', properties: { runId: { type: 'string' } }, required: ['runId'], additionalProperties: false },
+      async execute(args) {
+        if (!args || !args.runId) return badArg('runId is required');
+        try { return ok(await service.fsmStop(args.runId)); } catch (e) { return fail(e); }
+      },
+    },
   ];
 
   // DSH requires every tool to declare how its result is rendered.

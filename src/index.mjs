@@ -87,6 +87,7 @@ function mountLifecycle(ctx, service) {
             if (a && a.id) ids.add(String(a.id));
           }
         }
+        service.stopRunsOwnedBy([...ids], 'session-disposed').catch(() => {});
         service.closeOwnedBy([...ids], 'session-disposed').catch((err) => {
           console.warn('serial-trigger: releasing ports for a disposed session failed', err);
         });

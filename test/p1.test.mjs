@@ -246,7 +246,7 @@ test('E03 applying the plugin twice does not double-register tools', async () =>
   };
   await apply(ctx, { dataRoot });
   await apply(ctx, { dataRoot });
-  assert.equal(registered.length, 11);
+  assert.equal(registered.length, 17);
 });
 
 // ---------- files ----------
