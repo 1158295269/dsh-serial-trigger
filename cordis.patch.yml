@@ -1,0 +1,6 @@
+# dsh-serial-trigger bundle patch.
+# 'name' stays relative so the row resolves beside this file both when installed
+# from npm (node_modules/...) and when linked from a working copy.
+- insert:
+    - id: serial-trigger
+      name: './src/index.mjs'

@@ -1,0 +1,103 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body { font-family: -apple-system, "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; color: #1f2328; background: #f2f2f4; font-size: 13px; }
+.mono { font-family: "Cascadia Mono", Consolas, "JetBrains Mono", monospace; }
+button { font: inherit; cursor: pointer; }
+.app { display: grid; grid-template-columns: 244px 1fr; height: 100%; gap: 10px; padding: 12px; }
+.side { background: #fff; border: 1px solid #e4e5e9; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 16px; overflow: auto; }
+.sec h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; color: #8b929c; font-weight: 600; }
+.port { display: flex; align-items: center; gap: 9px; padding: 8px 9px; border-radius: 9px; cursor: pointer; }
+.port:hover { background: #f7f8fa; }
+.port.active { background: #f2f5f9; }
+.port .name { font-weight: 600; font-size: 12.5px; }
+.port .meta { color: #98a0ab; font-size: 11px; margin-top: 1px; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.dot.open { background: #2f9e75; box-shadow: 0 0 0 3px rgba(47,158,117,.15); }
+.dot.closed { background: #ccd1d8; }
+.rec { padding: 8px 9px; border-radius: 9px; cursor: pointer; }
+.rec:hover { background: #f7f8fa; }
+.rec.now { background: #f2f5f9; }
+.rec .t1 { font-size: 12.5px; color: #2b313a; }
+.rec .t2 { font-size: 11px; color: #98a0ab; margin-top: 3px; display: flex; gap: 8px; }
+.main { background: #fff; border: 1px solid #e4e5e9; border-radius: 12px; display: flex; flex-direction: column; overflow: hidden; }
+.head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid #eef0f2; }
+.tabs { display: flex; background: #f1f2f4; border-radius: 8px; padding: 2px; }
+.tabs button { border: 0; background: transparent; padding: 4px 12px; border-radius: 6px; color: #5b616e; font-size: 12px; }
+.tabs button.on { background: #fff; color: #1f2328; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+.grow { flex: 1; }
+.chip { border: 1px solid #e2e3e6; background: #fff; color: #5b616e; border-radius: 999px; padding: 3px 10px; font-size: 12px; }
+.chip.on { background: #1f2328; color: #fff; border-color: #1f2328; }
+.btn { border: 1px solid #d9dbe0; background: #fff; border-radius: 7px; padding: 5px 12px; color: #2b313a; font-size: 12.5px; }
+.btn.primary { background: #1f2328; color: #fff; border-color: #1f2328; }
+.log { flex: 1; overflow: auto; padding: 10px 0; font-size: 12.5px; }
+.log .line { display: grid; grid-template-columns: 104px 22px 1fr; gap: 8px; padding: 6px 18px; line-height: 1.55; }
+.log .line:hover { background: #fafbfc; }
+.log .t { color: #a2a9b3; }
+.log .d { color: #c2c8d0; }
+.tx { color: #2563eb; }
+.err { color: #cf5656; }
+.line.errline { background: rgba(207,86,86,.06); }
+.send { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid #eef0f2; align-items: center; }
+.send input { flex: 1; font: inherit; border: 1px solid #dcdee3; border-radius: 8px; padding: 8px 11px; }
+select { font: inherit; border: 1px solid #dcdee3; border-radius: 8px; padding: 7px 9px; background: #fff; }
+.status { display: flex; gap: 18px; padding: 7px 16px; border-top: 1px solid #f1f2f4; color: #7b8390; font-size: 11.5px; background: #fbfbfc; }
+.status b { color: #414852; font-weight: 600; }
+.stats { padding: 20px 22px; overflow: auto; }
+.cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+.card { border: 1px solid #eceef1; border-radius: 11px; padding: 14px 16px; }
+.card .k { color: #8b929c; font-size: 11px; letter-spacing: .03em; }
+.card .v { font-size: 22px; font-weight: 600; margin-top: 6px; letter-spacing: -.01em; }
+.card .s { color: #98a0ab; font-size: 11px; margin-top: 4px; }
+.chartbox { margin-top: 18px; border: 1px solid #eceef1; border-radius: 11px; padding: 14px 16px 8px; }
+.chartbox h5 { margin: 0 0 2px; font-size: 12px; color: #4b525c; font-weight: 600; }
+.chartbox .sub { color: #98a0ab; font-size: 11px; }
+</style></head><body>
+<div class="app">
+
+  <aside class="side">
+    <div class="sec">
+      <h4>端口</h4>
+      <div class="port active"><span class="dot open"></span><div><div class="name">COM3</div><div class="meta">115200 · 8N1 · 已连接</div></div></div>
+      <div class="port"><span class="dot closed"></span><div><div class="name">COM4</div><div class="meta">可用</div></div></div>
+      <div class="port"><span class="dot closed"></span><div><div class="name">MOCK:CM4</div><div class="meta">模拟端口</div></div></div>
+    </div>
+    <div class="sec">
+      <h4>本次录制</h4>
+      <div class="rec now"><div class="t1">调 I2C 断连</div><div class="t2"><span>23:12 开始</span><span>128.4 KB</span></div></div>
+    </div>
+    <div class="sec">
+      <h4>最近录制</h4>
+      <div class="rec"><div class="t1">ble 断连复现</div><div class="t2"><span>昨天 21:04</span><span>2.1 MB</span></div></div>
+      <div class="rec"><div class="t1">产测日志 3 号机</div><div class="t2"><span>11-18</span><span>8.4 MB</span></div></div>
+      <div class="rec"><div class="t1">低功耗唤醒测试</div><div class="t2"><span>11-16</span><span>512 KB</span></div></div>
+    </div>
+  </aside>
+  <section class="main">
+    <div class="head">
+      <div class="tabs"><button>终端</button><button class="on">统计</button></div>
+      <span class="grow"></span>
+      <span style="color:#8b929c;font-size:12px">本次录制 · 4 分 12 秒</span>
+      <button class="btn">导出</button>
+      <button class="btn">关闭串口</button>
+    </div>
+    <div class="stats">
+      <div class="cards">
+        <div class="card"><div class="k">接收</div><div class="v">128.4 <span style="font-size:13px;color:#8b929c">KB</span></div><div class="s">12,884 行</div></div>
+        <div class="card"><div class="k">发送</div><div class="v">2.1 <span style="font-size:13px;color:#8b929c">KB</span></div><div class="s">38 次</div></div>
+        <div class="card"><div class="k">当前速率</div><div class="v">1.2 <span style="font-size:13px;color:#8b929c">KB/s</span></div><div class="s">峰值 2.4 KB/s</div></div>
+        <div class="card"><div class="k">会话时长</div><div class="v">4:12</div><div class="s">115200 · 8N1</div></div>
+      </div>
+      <div class="chartbox">
+        <h5>接收速率</h5>
+        <div class="sub">最近 30 秒 · 每秒采样 · 峰值 2.4 KB/s</div>
+        <div style="margin-top:10px"><svg viewBox="0 0 980 150" width="100%" height="150" preserveAspectRatio="none">
+    <defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4f8ff0" stop-opacity=".18"/><stop offset="1" stop-color="#4f8ff0" stop-opacity="0"/></linearGradient></defs>
+    <path d="M0.0,133.6 L51.6,125.5 L103.2,129.5 L154.7,114.5 L206.3,95.5 L257.9,105.0 L309.5,84.5 L361.1,65.5 L412.6,75.0 L464.2,53.2 L515.8,62.7 L567.4,40.9 L618.9,49.1 L670.5,30.0 L722.1,24.5 L773.7,32.7 L825.3,20.5 L876.8,28.6 L928.4,17.7 L980.0,25.9 L980,150 L0,150 Z" fill="url(#g)"/>
+    <path d="M0.0,133.6 L51.6,125.5 L103.2,129.5 L154.7,114.5 L206.3,95.5 L257.9,105.0 L309.5,84.5 L361.1,65.5 L412.6,75.0 L464.2,53.2 L515.8,62.7 L567.4,40.9 L618.9,49.1 L670.5,30.0 L722.1,24.5 L773.7,32.7 L825.3,20.5 L876.8,28.6 L928.4,17.7 L980.0,25.9" fill="none" stroke="#4f8ff0" stroke-width="2" stroke-linejoin="round"/>
+  </svg></div>
+      </div>
+    </div>
+    <div class="status"><span>RX <b>128.4 KB</b></span><span>TX <b>2.1 KB</b></span><span>平均 <b>1.0 KB/s</b></span><span>12 行</span></div>
+  </section>
+</div></body></html>

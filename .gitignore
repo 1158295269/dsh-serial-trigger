@@ -1,0 +1,11 @@
+# dependencies (reproduced by pnpm install + lockfile)
+node_modules/
+
+# local scratch data from test runs
+.tmp-data/
+*.log
+
+# editor / OS noise
+.DS_Store
+Thumbs.db
+.vscode/

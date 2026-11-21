@@ -1,0 +1,372 @@
+/**
+ * Serial service: owns ports, captures and the tail cursor.
+ *
+ * A port has exactly one capture writer (one .slog) and one subscriber that
+ * pumps batches from the hub into it. Readers (tail / tools / future panel)
+ * consume the same hub stream, so what is recorded and what is shown cannot
+ * diverge.
+ */
+import { Hub, TOPIC } from './hub.mjs';
+import { LineAssembler } from './lines.mjs';
+import { KIND } from './codec.mjs';
+
+import { SerialError } from './errors.mjs';
+import { createSerialBackend } from './serial-backend.mjs';
+export { SerialError };
+
+let nextPortId = 1;
+
+export class SerialService {
+  constructor(opts) {
+    this.hub = opts.hub || new Hub(opts.hubOptions || {});
+    this.store = opts.store;
+    this.backend = opts.backend || createSerialBackend();
+    this.config = opts.config || {};
+    this.ports = new Map();      // portId -> record
+    this.byName = new Map();     // name -> portId
+    this.cursors = new Map();    // portId -> { seq, assembler, lines }
+    this.mockPorts = new Set();
+  }
+
+  listPorts() {
+    const out = [];
+    for (const [id, rec] of this.ports) {
+      out.push({ portId: id, port: rec.name, baudRate: rec.baud, state: rec.state, captureId: rec.captureId, path: rec.path, bytesRx: rec.bytesRx, bytesTx: rec.bytesTx });
+    }
+    for (const name of this.mockPorts) {
+      if (!this.byName.has(name)) out.push({ portId: null, port: name, state: 'available', mock: true });
+    }
+    return out;
+  }
+
+  /** Real ports from the driver, merged with whatever this service holds open. */
+  async discoverPorts() {
+    let real = [];
+    try {
+      real = await this.backend.list();
+    } catch {
+      real = [];
+    }
+    const openByPath = new Map();
+    for (const [, rec] of this.ports) if (rec.state !== 'closed') openByPath.set(String(rec.name).toLowerCase(), rec);
+
+    const out = real.map((p) => {
+      const open = openByPath.get(String(p.path).toLowerCase());
+      return {
+        portId: open ? open.id : null,
+        port: p.path,
+        friendlyName: p.friendlyName,
+        baudRate: open ? open.baud : null,
+        state: open ? open.state : 'available',
+        captureId: open ? open.captureId : null,
+        bytesRx: open ? open.bytesRx : 0,
+        bytesTx: open ? open.bytesTx : 0,
+      };
+    });
+    // Anything we hold open but the driver did not enumerate (mock ports, or a
+    // device that vanished) still has to show up.
+    const listed = new Set(out.map((p) => String(p.port).toLowerCase()));
+    for (const [, rec] of this.ports) {
+      if (rec.state === 'closed') continue;
+      const key = String(rec.name).toLowerCase();
+      if (listed.has(key)) continue;
+      listed.add(key);
+      out.push({
+        portId: rec.id, port: rec.name, friendlyName: rec.kind === 'mock' ? '模拟端口' : '',
+        baudRate: rec.baud, state: rec.state, captureId: rec.captureId,
+        bytesRx: rec.bytesRx, bytesTx: rec.bytesTx,
+      });
+    }
+
+    for (const name of this.mockPorts) {
+      if (listed.has(String(name).toLowerCase())) continue;
+      out.push({ portId: null, port: name, friendlyName: '模拟端口', baudRate: null, state: 'available', captureId: null, bytesRx: 0, bytesTx: 0 });
+    }
+    return out;
+  }
+
+  registerMockPort(name) {
+    this.mockPorts.add(name);
+    return name;
+  }
+
+  async open(opts) {
+    const { port, baudRate = 115200, project = 'default', conversation = 'session', sessionId = '' } = opts;
+    const existing = this.byName.get(port);
+    if (existing && this.ports.get(existing)?.state === 'open') {
+      throw new SerialError('E_PORT_BUSY', port + ' is already open by this conversation', {
+        hint: 'Close it first with serial_close, or use serial_tail on the existing portId ' + existing + '.',
+        fix: ['serial_close({portId:' + existing + '})', 'or reuse portId ' + existing],
+        retryable: false,
+      });
+    }
+
+    const cap = opts.record === false
+      ? { captureId: null, path: null, writer: null }
+      : await this.store.openCapture({ project, conversation, sessionId, port, baud: baudRate });
+    const portId = nextPortId++;
+    const rec = {
+      id: portId, name: port, baud: baudRate, state: 'open',
+      captureId: cap.captureId, path: cap.path, writer: cap.writer,
+      bytesRx: 0, bytesTx: 0, lines: 0, started: Date.now(),
+    };
+    this.ports.set(portId, rec);
+    this.byName.set(port, portId);
+    this.hub.registerPort(portId);
+    // One assembler per framing policy: switching modes must not re-use a buffer
+    // that was built under different break rules.
+    this.cursors.set(portId, { seq: 0, assemblers: new Map(), lines: [] });
+    // Lossless recording: the tap writes inline, so a burst can never drop bytes.
+    this.hub.setTap(portId, (batch) => this._record(rec, batch));
+
+    const isMock = opts.transport === 'mock' || /^MOCK:/i.test(String(port));
+    rec.kind = isMock ? 'mock' : 'serial';
+    if (!isMock) {
+      try {
+        rec.transport = await this.backend.open({
+          path: port,
+          baudRate,
+          friendlyName: opts.friendlyName,
+          onData: (chunk) => this.hub.publishData(portId, {
+            dir: 0,
+            bytes: chunk,
+            tMonoUs: Math.round(performance.now() * 1000),
+            tWallMs: Date.now(),
+          }),
+          onError: (err) => {
+            rec.state = 'error';
+            this.hub.publishStatus(portId, 'open', 'error', String(err && err.message));
+          },
+        });
+      } catch (err) {
+        rec.state = 'error';
+        this.hub.clearTap(portId);
+        if (rec.writer) await this.store.closeCapture(rec.captureId, { cleanClose: false }).catch(() => {});
+        throw err;
+      }
+    }
+
+    this.hub.publishStatus(portId, 'closed', 'open', 'user');
+    return { portId, captureId: cap.captureId, path: cap.path, kind: rec.kind };
+  }
+
+  /** Inline tap: hub batch -> capture file. Never queued, so it cannot drop. */
+  _record(rec, batch) {
+    if (!rec.writer) return;
+    try {
+      rec.writer.append({
+        kind: batch.dir === 1 ? KIND.TX : KIND.RX,
+        bytes: batch.bytes,
+        tMonoUs: batch.tMonoUs,
+        tWallMs: batch.tWallMs,
+        flags: batch.flags || 0,
+      });
+      if (batch.dir === 1) rec.bytesTx += batch.bytes.length;
+      else rec.bytesRx += batch.bytes.length;
+    } catch (err) {
+      rec.state = 'error';
+      this.hub.publishStatus(rec.id, 'open', 'error', String(err && err.message));
+    }
+  }
+
+  async close(portId) {
+    const rec = this.ports.get(portId);
+    if (!rec) throw new SerialError('E_PORT_NOT_FOUND', 'no such portId ' + portId, { hint: 'The portId is unknown or already closed. serial_ports() lists what is open right now.', fix: ['serial_ports()', 'serial_open({port})'] });
+    if (rec.state === 'closed' || rec.state === 'draining') return { portId, already: true };
+    rec.state = 'draining';
+    this.hub.publishStatus(portId, 'open', 'draining', 'user');
+    this.hub.clearTap(portId);
+    if (rec.transport) {
+      await rec.transport.close().catch(() => {});
+      rec.transport = null;
+    }
+    const cur = this.cursors.get(portId);
+    if (cur) {
+      for (const a of cur.assemblers.values()) {
+        for (const line of a.flush(Date.now())) cur.lines.push(line);
+      }
+    }
+    const closed = rec.writer
+      ? await this.store.closeCapture(rec.captureId, { txBytes: rec.bytesTx, cleanClose: true })
+      : { digest: { lines: 0 } };
+    rec.state = 'closed';
+    this.hub.publishStatus(portId, 'draining', 'closed', 'user');
+    this.hub.publishCapture({ portId, captureId: rec.captureId, path: rec.path, event: 'closed', bytes: rec.bytesRx + rec.bytesTx });
+    return {
+      portId,
+      captureId: rec.captureId,
+      path: rec.path,
+      bytesRx: rec.bytesRx,
+      bytesTx: rec.bytesTx,
+      lines: closed.digest.lines,
+    };
+  }
+
+  /**
+   * Replay a text log into a mock port. Used to exercise the panel without
+   * hardware; the API layer restricts which directories may be read.
+   */
+  async replayFile(portId, filePath, opts = {}) {
+    const { readFile } = await import('node:fs/promises');
+    const buf = await readFile(filePath);
+    const chunk = Math.max(64, opts.chunk || 1024);
+    const delay = Math.max(0, opts.delayMs ?? 0);
+    for (let i = 0; i < buf.length; i += chunk) {
+      this.feed(portId, buf.subarray(i, i + chunk));
+      if (delay) await new Promise((r) => setTimeout(r, delay));
+    }
+    return { bytes: buf.length, chunks: Math.ceil(buf.length / chunk) };
+  }
+
+  /** Mock adapter: inject bytes as if they came from the wire. */
+  feed(portId, chunk, dir = 0) {
+    const target = this.ports.get(portId);
+    if (!target || target.state !== 'open') {
+      throw new SerialError('E_PORT_NOT_OPEN', 'cannot feed portId ' + portId + ' (' + (target ? target.state : 'unknown') + ')', {
+        hint: 'Bytes can only be injected into a port opened by serial_open; otherwise they would vanish into an unwatched ring.',
+        fix: ['serial_open({port})', 'serial_ports()'],
+      });
+    }
+    return this.hub.publishData(portId, {
+      dir,
+      bytes: Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk),
+      tMonoUs: Math.round(performance.now() * 1000),
+      tWallMs: Date.now(),
+    });
+  }
+
+  async send(portId, payload) {
+    const rec = this.ports.get(portId);
+    if (!rec) throw new SerialError('E_PORT_NOT_FOUND', 'no such portId ' + portId, { hint: 'The portId is unknown or the port was closed. Call serial_ports() to see open ports, or serial_open() to start a new one.', fix: ['serial_ports()', 'serial_open({port})'] });
+    if (rec.state !== 'open') throw new SerialError('E_PORT_NOT_OPEN', 'port ' + rec.name + ' is ' + rec.state, { hint: 'The port is ' + rec.state + '; reopen it before sending.', fix: ['serial_open({port})'], retryable: true });
+    const bytes = Buffer.isBuffer(payload) ? payload : Buffer.from(String(payload), 'utf8');
+    if (rec.transport) await rec.transport.write(bytes);
+    this.hub.publishData(portId, { dir: 1, bytes, tMonoUs: Math.round(performance.now() * 1000), tWallMs: Date.now() });
+    return { portId, bytes: bytes.length };
+  }
+
+  /** Incremental read: returns lines after the cursor, plus the next cursor. */
+  async tail(opts) {
+    const { portId, maxLines = 200, timeoutMs = 0 } = opts;
+    const rec = this.ports.get(portId);
+    if (!rec) throw new SerialError('E_PORT_NOT_FOUND', 'no such portId ' + portId, { hint: 'The portId is unknown or already closed. serial_ports() lists what is open right now.', fix: ['serial_ports()', 'serial_open({port})'] });
+    const cur = this.cursors.get(portId);
+    const mode = ['any', 'crlf', 'lf'].includes(opts.lineEnding) ? opts.lineEnding : 'any';
+    let assembler = cur.assemblers.get(mode);
+    if (!assembler) {
+      assembler = new LineAssembler({ lineEnding: mode });
+      cur.assemblers.set(mode, assembler);
+    }
+    let cursor = opts.cursor;
+    // No cursor means "show me what just happened", not "start from now":
+    // default to the tail of the ring buffer so a fresh tail call is useful.
+    if (cursor === undefined || cursor === null) cursor = Math.max(0, this.hub.head(portId) - (opts.backlogBytes ?? 262144));
+    if (cursor > this.hub.head(portId)) cursor = this.hub.head(portId);
+
+    const lines = [];
+    let consumed = cursor;
+    const take = () => {
+      const batches = this.hub.backlog(portId, consumed, 4 << 20);
+      for (const batch of batches) {
+        for (const line of assembler.feed(batch)) {
+          lines.push({ t: line.tWallMs, seq: line.seq, text: line.text, dir: batch.dir === 1 ? 'tx' : 'rx', partial: line.partial });
+          if (lines.length >= maxLines) {
+            consumed = batch.seq + batch.bytes.length;
+            return true;
+          }
+        }
+        consumed = batch.seq + batch.bytes.length;
+      }
+      return false;
+    };
+
+    let full = take();
+    if (!full && lines.length === 0 && timeoutMs > 0) {
+      const sub = this.hub.subscribe(TOPIC.STREAM, { filter: { portId }, cursor: consumed, queueBytes: 4 << 20 });
+      const deadline = Date.now() + timeoutMs;
+      try {
+        while (Date.now() < deadline && lines.length === 0) {
+          const msg = await sub.next(Math.max(5, deadline - Date.now()));
+          if (!msg) break;
+          for (const line of assembler.feed(msg)) {
+            lines.push({ t: line.tWallMs, seq: line.seq, text: line.text, dir: msg.dir === 1 ? 'tx' : 'rx', partial: line.partial });
+            if (lines.length >= maxLines) break;
+          }
+          consumed = msg.seq + msg.bytes.length;
+        }
+      } finally {
+        sub.close();
+      }
+    }
+
+    const partial = assembler.carry.length > 0
+      ? { text: assembler.carry, seq: assembler.carrySeq, partial: true }
+      : null;
+
+    return {
+      portId,
+      cursor: consumed,
+      lines,
+      // Unterminated bytes are returned separately so the panel can render them as a
+      // dimmed last line that updates in place instead of duplicating rows.
+      pending: partial,
+      droppedBytes: 0,
+      head: this.hub.head(portId),
+      state: rec.state,
+      bytesRx: rec.bytesRx,
+      bytesTx: rec.bytesTx,
+      startedAt: rec.started,
+    };
+  }
+
+  /** History view: a capture read back from disk, no port involved. */
+  async captureLines(captureId, opts) {
+    return this.store.readCaptureLines(captureId, opts);
+  }
+
+  /** Delete a capture, refusing while it is the one being recorded. */
+  async deleteCapture(captureId) {
+    for (const [, rec] of this.ports) {
+      if (rec.state !== 'closed' && rec.captureId === captureId) {
+        throw new SerialError('E_CAPTURE_BUSY', 'capture ' + captureId + ' is being recorded right now', {
+          hint: 'Close the port first, then delete the file.',
+          fix: ['serial_close({portId:' + rec.id + '})', 'retry the delete'],
+        });
+      }
+    }
+    return this.store.deleteCapture(captureId);
+  }
+
+  async captures(opts = {}) {
+    return this.store.listCaptures(opts);
+  }
+
+  async grep(captureId, pattern, opts) {
+    return this.store.grep(captureId, pattern, opts);
+  }
+
+  async exportCapture(captureId, opts) {
+    return this.store.exportCapture(captureId, opts);
+  }
+
+  /** Close every open port and drop cursors. Idempotent. */
+  async dispose() {
+    for (const [id, rec] of [...this.ports]) {
+      if (rec.state === 'open' || rec.state === 'draining') await this.close(id).catch(() => {});
+      this.hub.clearTap(id);
+    }
+    this.cursors.clear();
+  }
+
+  /** Wait until everything fed so far is on disk (bounds memory during fast replay). */
+  async flush(portId) {
+    const rec = this.ports.get(portId);
+    if (rec && rec.writer) await rec.writer.flush();
+  }
+
+  status(portId) {
+    const rec = this.ports.get(portId);
+    if (!rec) return null;
+    return { portId, port: rec.name, state: rec.state, bytesRx: rec.bytesRx, bytesTx: rec.bytesTx, captureId: rec.captureId, path: rec.path };
+  }
+}
