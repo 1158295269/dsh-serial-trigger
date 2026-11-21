@@ -88,19 +88,21 @@ test('e2e: errors are structured and actionable', async (t) => {
   assert.equal(missing.error.code, 'E_PORT_NOT_FOUND');
   assert.ok(missing.error.hint.length > 10);
 
+  // Model opens take over by default (SPEC 23.5): the second call succeeds and
+  // the first holder is closed cleanly instead of failing with E_PORT_BUSY.
   const opened = await byName.serial_open.execute({ port: 'MOCK:CM4' });
   const again = await byName.serial_open.execute({ port: 'MOCK:CM4' });
-  assert.equal(again.ok, false);
-  assert.equal(again.error.code, 'E_PORT_BUSY');
-  assert.ok(again.error.fix.length > 0);
+  assert.equal(again.ok, true);
+  assert.notEqual(again.data.portId, opened.data.portId);
+  assert.equal(service.status(opened.data.portId).state, 'closed');
 
   const badExport = await byName.serial_export.execute({ captureId: 'nope' });
   assert.equal(badExport.ok, false);
   assert.equal(badExport.error.code, 'E_NO_SUCH_CAPTURE');
   assert.ok(badExport.error.hint.includes('serial_captures'));
 
-  await byName.serial_close.execute({ portId: opened.data.portId });
-  await service.close(opened.data.portId).catch(() => {});
+  await byName.serial_close.execute({ portId: again.data.portId });
+  await service.close(again.data.portId).catch(() => {});
 });
 
 test('replay: a recorded capture feeds a mock port at speed', async (t) => {

@@ -74,9 +74,11 @@ export function createTools(service) {
         required: ['port'],
         additionalProperties: false,
       },
-      async execute(args) {
+      async execute(args, exec) {
         if (!args || !args.port) return badArg('port is required');
-        try { return ok(await service.open(args)); } catch (e) { return fail(e); }
+        // Model opens always take over (SPEC 23.5). The owner travels with the
+        // call so the panel can tell a live agent holder from a stale session.
+        try { return ok(await service.open({ ...args, owner: ownerOf(exec), autoTakeover: true })); } catch (e) { return fail(e); }
       },
     },
     {
@@ -122,7 +124,7 @@ export function createTools(service) {
         required: ['portId'],
         additionalProperties: false,
       },
-      async execute(args) {
+      async execute(args, exec) {
         if (!args || typeof args.portId !== 'number') return badArg('portId is required');
         if (!args.text && !args.hex) return badArg('text or hex is required');
         if (args.text && args.hex) return badArg('text and hex are mutually exclusive; pass one of them');
@@ -137,7 +139,7 @@ export function createTools(service) {
         else payload = Buffer.from(String(args.text), 'utf8');
         const tail = { none: '', cr: '\r', lf: '\n', crlf: '\r\n' }[args.append || 'none'] ?? '';
         if (tail) payload = Buffer.concat([payload, Buffer.from(tail, 'utf8')]);
-        try { return ok(await service.send(args.portId, payload)); } catch (e) { return fail(e); }
+        try { return ok(await service.send(args.portId, payload, { owner: ownerOf(exec) })); } catch (e) { return fail(e); }
       },
     },
     {

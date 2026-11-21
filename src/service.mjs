@@ -129,6 +129,10 @@ export class SerialService {
   async open(opts) {
     const { port, baudRate = 115200, project = 'default', conversation = 'session', sessionId = '' } = opts;
     const owner = opts.owner || { kind: 'agent', id: 'unknown' };
+    // The model path always takes over (SPEC 23.5): a port is a single-writer
+    // resource, and the previous holder must finish its capture cleanly instead
+    // of blocking the caller with E_PORT_BUSY.
+    const canTakeOver = opts.takeover === true || opts.autoTakeover === true;
     const norm = String(port).toLowerCase();
     let existing = this.byName.get(port);
     if (existing === undefined) {
@@ -141,7 +145,7 @@ export class SerialService {
     }
     const held = existing === undefined ? null : this.ports.get(existing);
     if (held && held.state === 'open') {
-      if (!opts.takeover) {
+      if (!canTakeOver) {
         throw new SerialError('E_PORT_BUSY', port + ' is already open by ' + describeOwner(held.owner), {
           hint: 'Another session or agent is using it. Read-only access works through serial_tail on portId ' + existing + '; to seize it, pass takeover:true (their capture is closed cleanly first).',
           fix: ['serial_tail({portId:' + existing + '}) to read only', 'serial_open({port, takeover:true}) to take over'],
@@ -242,6 +246,9 @@ export class SerialService {
     if (rec.state === 'closed' || rec.state === 'draining') return { portId, already: true };
     rec.state = 'draining';
     this.hub.publishStatus(portId, 'open', 'draining', 'user');
+    // A machine bound to this port would keep polling a dead ring and could
+    // still write with force:true, so it must end with the port it drives.
+    await this._stopRunsForPort(portId, 'port-closed');
     this.hub.clearTap(portId);
     if (rec.transport) {
       await rec.transport.close().catch(() => {});
@@ -734,6 +741,14 @@ export class SerialService {
     const run = this.fsmRuns.get(runId);
     if (!run) throw new SerialError('E_NO_SUCH_RUN', 'no such run ' + runId, { hint: 'Machines are stopped when their session ends.', fix: ['serial_fsm_start'] });
     return run;
+  }
+
+  /** Stop every live machine bound to one port (the port is closing). */
+  async _stopRunsForPort(portId, reason = 'port-closed') {
+    for (const [id, run] of [...this.fsmRuns]) {
+      if (run.portId !== portId) continue;
+      await this.fsmStop(id).catch(() => {});
+    }
   }
 
   /** Stop runs owned by identities that just went away. */
