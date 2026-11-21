@@ -97,7 +97,7 @@ export function createApi(service, settings = {}) {
 
     'GET /serial/rules': async () => ok(await service.rulesList()),
 
-    'POST /serial/rules': async (ctx) => {
+    'POST /serial/rules/add': async (ctx) => {
       const body = ctx.body || {};
       if (!body.name || !body.source) return bad('E_INVALID_ARGS', 'name and source are required', 'Pass the rule module source.');
       return ok(await service.rulesAdd(body));
