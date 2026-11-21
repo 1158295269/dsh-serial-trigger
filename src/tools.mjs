@@ -191,6 +191,109 @@ export function createTools(service) {
         try { return ok(await service.exportCapture(args.captureId, args)); } catch (e) { return fail(e); }
       },
     },
+    {
+      name: 'serial_rules_add',
+      description: '安装或更新一条规则。规则是 JS 模块，导出 createScanner(ctx)，在沙箱子进程里跑，只看到字节流。装完要用 serial_rules_apply 才会产出故障点。',
+      parameters: {
+        type: 'object',
+        properties: {
+          name: { type: 'string', description: '规则名，[a-z0-9._-]，也是标记文件的文件名' },
+          source: { type: 'string', description: '完整模块源码：export function createScanner(ctx){ return { record(rec){...}, finish(){...} } }' },
+          meta: { type: 'object', description: '可选，{ description, version }' },
+        },
+        required: ['name', 'source'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.name || !args.source) return badArg('name and source are required');
+        try { return ok(await service.rulesAdd(args)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_rules_list',
+      description: '列出已安装的规则。',
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      async execute() {
+        try { return ok(await service.rulesList()); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_rules_remove',
+      description: '删除一条规则。已产出的标记不会被自动清理。',
+      parameters: {
+        type: 'object',
+        properties: { name: { type: 'string' } },
+        required: ['name'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.name) return badArg('name is required');
+        try { return ok(await service.rulesRemove(args.name)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_rules_apply',
+      description: '对某次录制重扫规则，产出故障点。不传 rules 则跑全部已安装规则。每次调用都会覆盖该规则上次的标记。',
+      parameters: {
+        type: 'object',
+        properties: {
+          captureId: { type: 'string' },
+          rules: { type: 'array', items: { type: 'string' }, description: '只跑这几条，省略则全部' },
+          timeoutMs: { type: 'number', description: '单条规则超时，默认 20000' },
+        },
+        required: ['captureId'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.captureId) return badArg('captureId is required');
+        try { return ok(await service.rulesApply(args.captureId, args)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_marks',
+      description: '读取故障点。只返回字节引用（dir/offset/length），不返回文本；要看内容再调 serial_bytes。',
+      parameters: {
+        type: 'object',
+        properties: {
+          captureId: { type: 'string' },
+          rule: { type: 'string' },
+          severity: { type: 'string', enum: ['error', 'warn', 'info'] },
+          beforeMs: { type: 'number', description: '窗口向前扩多少毫秒，默认 300' },
+          afterMs: { type: 'number', description: '窗口向后扩多少毫秒，默认 1000' },
+        },
+        required: ['captureId'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.captureId) return badArg('captureId is required');
+        try { return ok(await service.marks(args.captureId, args)); } catch (e) { return fail(e); }
+      },
+    },
+    {
+      name: 'serial_bytes',
+      description: '按引用取原始字节。hex 是真相，text 只是方便；单次最多 8 KB，超出会标 truncated。',
+      parameters: {
+        type: 'object',
+        properties: {
+          captureId: { type: 'string' },
+          dir: { type: 'string', enum: ['rx', 'tx'] },
+          offset: { type: 'number' },
+          length: { type: 'number', description: '最多 8192' },
+          format: { type: 'string', enum: ['hex', 'text', 'base64'] },
+          encoding: { type: 'string' },
+        },
+        required: ['captureId', 'offset', 'length'],
+        additionalProperties: false,
+      },
+      async execute(args) {
+        if (!args || !args.captureId) return badArg('captureId is required');
+        if (!Number.isFinite(Number(args.offset))) return badArg('offset must be a number');
+        const length = Number(args.length);
+        if (!Number.isFinite(length) || length <= 0) return badArg('length must be a positive number');
+        if (length > 8192) return badArg('length is capped at 8192 bytes; call again for the next range');
+        try { return ok(await service.bytes(args.captureId, args)); } catch (e) { return fail(e); }
+      },
+    },
   ];
 
   // DSH requires every tool to declare how its result is rendered.

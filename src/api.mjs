@@ -95,6 +95,41 @@ export function createApi(service, settings = {}) {
       return ok({ ok: true, ...res });
     },
 
+    'GET /serial/rules': async () => ok(await service.rulesList()),
+
+    'POST /serial/rules': async (ctx) => {
+      const body = ctx.body || {};
+      if (!body.name || !body.source) return bad('E_INVALID_ARGS', 'name and source are required', 'Pass the rule module source.');
+      return ok(await service.rulesAdd(body));
+    },
+
+    'POST /serial/rules/apply': async (ctx) => {
+      const body = ctx.body || {};
+      if (!body.captureId) return bad('E_INVALID_ARGS', 'captureId is required', 'Pick a capture from the sidebar.');
+      return ok(await service.rulesApply(body.captureId, body));
+    },
+
+    'GET /serial/marks': async (ctx) => {
+      if (!ctx.query.captureId) return bad('E_INVALID_ARGS', 'captureId is required', 'Pick a capture from the sidebar.');
+      const res = await service.marks(ctx.query.captureId, {
+        rule: ctx.query.rule,
+        severity: ctx.query.severity,
+        beforeMs: Number(ctx.query.beforeMs) || undefined,
+        afterMs: Number(ctx.query.afterMs) || undefined,
+      });
+      return ok(res);
+    },
+
+    'GET /serial/bytes': async (ctx) => {
+      if (!ctx.query.captureId) return bad('E_INVALID_ARGS', 'captureId is required', 'Pick a capture from the sidebar.');
+      const res = await service.bytes(ctx.query.captureId, {
+        dir: ctx.query.dir || 'rx',
+        offset: Number(ctx.query.offset) || 0,
+        length: Number(ctx.query.length) || 256,
+        format: ctx.query.format || 'hex',
+      });
+      return ok(res);
+    },
     'GET /serial/capture': async (ctx) => {
       if (!ctx.query.id) return bad('E_INVALID_ARGS', 'id is required', 'Pick a capture from the sidebar.');
       const res = await service.captureLines(ctx.query.id, { maxLines: Number(ctx.query.maxLines) || 20000 });

@@ -10,7 +10,7 @@
  * the tree. Files are the source of truth.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink, writeFile, rename, readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname, basename } from 'node:path';
@@ -286,6 +286,112 @@ export class Store {
       });
     }
     return { path: outPath, format, bytes: Buffer.byteLength(body, 'utf8'), lines: chunks.length };
+  }
+
+  /** Absolute path of a capture file. */
+  capturePath(captureId) {
+    const row = this.db.prepare('SELECT path FROM captures WHERE id = ?').get(captureId);
+    if (!row) throw new SerialError('E_NO_SUCH_CAPTURE', 'no capture with id ' + captureId, {
+      hint: 'Call serial_captures() to list what exists.',
+      fix: ['serial_captures()'],
+    });
+    return row.path;
+  }
+
+  /**
+   * Walk a capture and yield data records with per-direction byte offsets.
+   * This is the contract the rule engine consumes: timestamps plus raw bytes.
+   */
+  async scanCapture(captureId, onRecord, opts = {}) {
+    const path = this.capturePath(captureId);
+    const wantDirs = opts.dirs || ['rx', 'tx'];
+    let offsetRx = 0;
+    let offsetTx = 0;
+    const reader = await SlogReader.open(path);
+    await reader.scan((rec) => {
+      if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return;
+      const dir = rec.kind === KIND.TX ? 'tx' : 'rx';
+      if (!wantDirs.includes(dir)) return;
+      const offset = dir === 'rx' ? offsetRx : offsetTx;
+      if (dir === 'rx') offsetRx += rec.bytes.length; else offsetTx += rec.bytes.length;
+      return onRecord({
+        dir, offset, t: rec.tWallMs, monoUs: rec.tMonoUs, data: Buffer.from(rec.bytes), length: rec.bytes.length,
+      });
+    });
+    return { rx: offsetRx, tx: offsetTx };
+  }
+
+  /** Pull an exact byte range back out of a capture by reference. */
+  async readCaptureBytes(captureId, { dir = 'rx', offset = 0, length = 256 } = {}) {
+    const want = Math.max(1, Math.min(Number(length) || 1, 1 << 20));
+    const start = Math.max(0, Number(offset) || 0);
+    const parts = [];
+    let have = 0;
+    let actualStart = null;
+    await this.scanCapture(captureId, (rec) => {
+      if (rec.dir !== dir || have >= want) return;
+      const end = rec.offset + rec.length;
+      if (end <= start) return;
+      if (actualStart === null) actualStart = rec.offset;
+      const from = Math.max(0, start - rec.offset);
+      const slice = rec.data.subarray(from, from + (want - have));
+      parts.push(slice);
+      have += slice.length;
+    }, { dirs: [dir] });
+    return { dir, offset: actualStart === null ? start : actualStart, length: have, data: Buffer.concat(parts), truncated: have >= want };
+  }
+
+  /** Coarse (time -> byte offset) timeline used to turn a time window into a byte window. */
+  async captureTimeline(captureId) {
+    const out = [];
+    await this.scanCapture(captureId, (rec) => {
+      out.push({ dir: rec.dir, offset: rec.offset, length: rec.length, t: rec.t });
+    });
+    return out;
+  }
+
+  /** Marks live beside the capture, one file per rule: delete the file, drop the marks. */
+  marksDir(captureId) {
+    const path = this.capturePath(captureId);
+    return path.replace(/\.slog$/, '') + '.marks';
+  }
+
+  async writeMarks(captureId, rule, marks) {
+    const dir = this.marksDir(captureId);
+    await mkdir(ioPath(dir), { recursive: true });
+    const file = join(dir, rule + '.jsonl');
+    const body = marks.map((m) => JSON.stringify(m)).join('\n') + (marks.length ? '\n' : '');
+    const tmp = file + '.tmp';
+    await writeFile(ioPath(tmp), body, 'utf8');
+    await rename(ioPath(tmp), ioPath(file));
+    return { file, count: marks.length };
+  }
+
+  async readMarks(captureId, { rule, severity } = {}) {
+    const dir = this.marksDir(captureId);
+    let files = [];
+    try {
+      files = await readdir(ioPath(dir));
+    } catch {
+      return [];
+    }
+    const marks = [];
+    for (const name of files) {
+      if (!name.endsWith('.jsonl')) continue;
+      const ruleName = name.replace(/\.jsonl$/, '');
+      if (rule && ruleName !== rule) continue;
+      const body = await readFile(ioPath(join(dir, name)), 'utf8');
+      for (const line of body.split('\n')) {
+        if (!line.trim()) continue;
+        try {
+          const mark = JSON.parse(line);
+          if (severity && mark.severity !== severity) continue;
+          marks.push(mark);
+        } catch { /* skip corrupt line */ }
+      }
+    }
+    marks.sort((a, b) => (a.t || 0) - (b.t || 0) || (a.anchor?.offset || 0) - (b.anchor?.offset || 0));
+    return marks;
   }
 
   /** Decode a capture into lines for read-only viewing. Capped to keep memory sane. */

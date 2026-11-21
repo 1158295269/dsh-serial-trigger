@@ -9,9 +9,12 @@
 import { Hub, TOPIC } from './hub.mjs';
 import { LineAssembler } from './lines.mjs';
 import { KIND } from './codec.mjs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
 
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';
+import { RuleEngine, normalizeMark, DEFAULT_TIMEOUT_MS } from './rules.mjs';
 export { SerialError };
 
 let nextPortId = 1;
@@ -21,6 +24,8 @@ export class SerialService {
     this.hub = opts.hub || new Hub(opts.hubOptions || {});
     this.store = opts.store;
     this.backend = opts.backend || createSerialBackend();
+    this.rulesRoot = opts.rulesRoot || join(homedir(), '.dsh', 'serial-trigger', 'rules');
+    this.engine = opts.engine || new RuleEngine({ rulesRoot: this.rulesRoot, nodePath: opts.nodePath });
     this.config = opts.config || {};
     this.ports = new Map();      // portId -> record
     this.byName = new Map();     // name -> portId
@@ -335,6 +340,103 @@ export class SerialService {
       }
     }
     return this.store.deleteCapture(captureId);
+  }
+
+  // ---------------------------------------------------------------- rules
+
+  async rulesAdd({ name, source, meta }) {
+    const res = await this.engine.install({ name, source, meta });
+    return { ...res, rulesRoot: this.rulesRoot };
+  }
+
+  async rulesList() {
+    return { rulesRoot: this.rulesRoot, rules: await this.engine.list() };
+  }
+
+  async rulesRemove(name) {
+    return this.engine.remove(name);
+  }
+
+  /**
+   * Re-scan a capture with one or more rules. Marks are produced by the rule,
+   * never by the caller: this is the only path that can create them.
+   */
+  async rulesApply(captureId, { rules, timeoutMs } = {}) {
+    const capture = this.store.capturePath(captureId);
+    const installed = await this.engine.list();
+    const wanted = Array.isArray(rules) && rules.length ? rules : installed.map((r) => r.name);
+    if (wanted.length === 0) {
+      throw new SerialError('E_NO_SUCH_RULE', 'no rules are installed', {
+        hint: 'Install one with serial_rules_add({name, source}) first.',
+        fix: ['serial_rules_add', 'serial_rules_apply'],
+      });
+    }
+    const results = [];
+    for (const name of wanted) {
+      const source = await this.engine.read(name);
+      const run = await this.engine.start({
+        source,
+        ctx: { captureId, path: capture },
+        timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_TIMEOUT_MS,
+      });
+      let scanned = 0;
+      try {
+        await this.store.scanCapture(captureId, async (rec) => {
+          scanned += rec.length;
+          await run.push(rec);
+        });
+        const { marks, truncated } = await run.finish();
+        const normalized = marks.map((m) => normalizeMark(m, name)).filter(Boolean);
+        const written = await this.store.writeMarks(captureId, name, normalized);
+        results.push({ rule: name, scannedBytes: scanned, marks: normalized.length, truncated, file: written.file });
+      } catch (err) {
+        run.kill();
+        results.push({ rule: name, scannedBytes: scanned, marks: 0, error: { code: err.code || 'E_RULE_FAILED', message: err.message } });
+      }
+    }
+    return { captureId, results };
+  }
+
+  /** Marks plus a byte-range window per mark: references only, never text. */
+  async marks(captureId, { rule, severity, beforeMs = 300, afterMs = 1000 } = {}) {
+    const marks = await this.store.readMarks(captureId, { rule, severity });
+    const timeline = marks.length ? await this.store.captureTimeline(captureId) : [];
+    const enriched = marks.map((mark) => {
+      const dir = mark.anchor?.dir || 'rx';
+      const lo = (mark.t || 0) - Math.max(0, beforeMs);
+      const hi = (mark.t || 0) + Math.max(0, afterMs);
+      let start = mark.anchor?.offset ?? 0;
+      let end = start + (mark.anchor?.length || 0);
+      for (const rec of timeline) {
+        if (rec.dir !== dir) continue;
+        if (rec.t >= lo && rec.t <= hi) {
+          start = Math.min(start, rec.offset);
+          end = Math.max(end, rec.offset + rec.length);
+        }
+      }
+      return { ...mark, window: { dir, offset: start, length: Math.max(0, end - start) } };
+    });
+    return { captureId, count: enriched.length, marks: enriched };
+  }
+
+  /** Materialise bytes addressed by a mark. Text is a convenience, hex is truth. */
+  async bytes(captureId, { dir, offset, length, format = 'hex', encoding = 'utf-8' } = {}) {
+    const range = await this.store.readCaptureBytes(captureId, { dir, offset, length });
+    const data = range.data;
+    let body;
+    if (format === 'base64') body = data.toString('base64');
+    else if (format === 'text') body = new TextDecoder(encoding, { fatal: false }).decode(data);
+    else {
+      const lines = [];
+      for (let i = 0; i < data.length; i += 16) {
+        const slice = data.subarray(i, i + 16);
+        const hex = [...slice].map((b) => b.toString(16).padStart(2, '0')).join(' ');
+        const ascii = [...slice].map((b) => (b >= 32 && b < 127 ? String.fromCharCode(b) : '.')).join('');
+        lines.push((range.offset + i).toString(16).padStart(8, '0') + '  ' + hex.padEnd(47) + '  |' + ascii + '|');
+      }
+      body = lines.join('\n');
+    }
+    return { dir: range.dir, offset: range.offset, length: range.length, format, truncated: range.truncated, body };
   }
 
   async captures(opts = {}) {
