@@ -671,6 +671,15 @@ export class SerialService {
     return { runId, status: run.machine.status(), marks: run.marks };
   }
 
+  fsmList(portId) {
+    const out = [];
+    for (const [id, run] of this.fsmRuns) {
+      if (portId && run.portId !== Number(portId)) continue;
+      out.push({ runId: id, portId: run.portId, alive: run.alive, scenario: run.scenario, status: run.machine.status(), marks: run.marks.length });
+    }
+    return out;
+  }
+
   fsmStatus(runId) {
     const run = this._run(runId);
     return { runId, portId: run.portId, alive: run.alive, marks: run.marks, status: run.machine.status() };
