@@ -33,6 +33,22 @@ function badArg(message) {
   }));
 }
 
+/**
+ * Who is calling. Sub-agents inherit the root session's identity so a delegated
+ * task does not suddenly look like a stranger to its own port.
+ */
+function ownerOf(exec) {
+  let cur = exec;
+  let guard = 0;
+  while (cur && cur.parent && guard < 8) {
+    if (typeof cur.parent === 'string' || typeof cur.parent === 'number') return { kind: 'agent', id: String(cur.parent) };
+    cur = cur.parent;
+    guard += 1;
+  }
+  const id = cur && cur.agent !== undefined ? String(cur.agent) : 'unknown';
+  return { kind: 'agent', id };
+}
+
 export function createTools(service) {
   const list = [
     {

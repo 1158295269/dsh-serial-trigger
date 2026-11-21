@@ -69,6 +69,8 @@ export function createApi(service, settings = {}) {
       const res = await service.open({
         port: body.port, baudRate: Number(body.baudRate) || 115200,
         project: body.project || 'default', conversation: body.conversation || 'session', sessionId: body.sessionId || '',
+        takeover: body.takeover === true,
+        owner: body.sessionId ? { kind: 'session', id: String(body.sessionId) } : { kind: 'session', id: 'panel' },
       });
       return ok({ ok: true, ...res });
     },
@@ -76,7 +78,10 @@ export function createApi(service, settings = {}) {
     'POST /serial/close': async (ctx) => {
       const portId = Number((ctx.body || {}).portId);
       if (!Number.isFinite(portId)) return bad('E_INVALID_ARGS', 'portId is required', 'Pass the portId from /serial/state.');
-      const res = await service.close(portId);
+      const res = await service.close(portId, {
+        owner: (ctx.body || {}).sessionId ? { kind: 'session', id: String(ctx.body.sessionId) } : undefined,
+        force: (ctx.body || {}).force === true,
+      });
       return ok({ ok: true, ...res });
     },
 
