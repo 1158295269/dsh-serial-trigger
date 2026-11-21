@@ -12,7 +12,9 @@
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "scripts": {
-    "test": "node --test test/"
+    "test": "node --test --test-force-exit test",
+    "test:ui": "node test/ui/run.mjs --base %DSH_BASE% --token %DSH_TOKEN%",
+    "bench": "node bench/lag.mjs 50"
   },
   "engines": {
     "node": ">=24"

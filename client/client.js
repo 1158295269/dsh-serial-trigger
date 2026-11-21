@@ -200,14 +200,24 @@ window.__ModuleLoader__.load({
         const el = rootRef.current
         const host = el && el.parentElement
         if (!host || typeof ResizeObserver === 'undefined') return
+        let box = host
         const fit = () => {
-          const h = host.clientHeight
-          if (h > 0) el.style.height = h + 'px'
+          let h = 0
+          let node = el.parentElement
+          while (node && node !== document.body) {
+            if (node.clientHeight > 80) { h = node.clientHeight; break }
+            node = node.parentElement
+          }
+          if (!h) h = Math.max(160, window.innerHeight - el.getBoundingClientRect().top - 96)
+          el.style.height = h + 'px'
         }
         fit()
         const ro = new ResizeObserver(fit)
-        ro.observe(host)
-        return () => ro.disconnect()
+        // observe the nearest ancestor that actually has a height
+        while (box && box !== document.body && box.clientHeight <= 80) box = box.parentElement
+        if (box && box !== document.body) ro.observe(box)
+        window.addEventListener('resize', fit)
+        return () => { ro.disconnect(); window.removeEventListener('resize', fit) }
       }, [])
 
       React.useEffect(() => {
