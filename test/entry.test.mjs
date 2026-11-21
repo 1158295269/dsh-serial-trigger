@@ -17,8 +17,7 @@ test('bundle entry registers every tool on a cordis-like ctx', async () => {
   assert.deepEqual(inject, ['tools']);
   assert.deepEqual(registered.sort(), [
     'serial_bytes', 'serial_captures', 'serial_close', 'serial_export', 'serial_grep',
-    'serial_marks', 'serial_open', 'serial_ports', 'serial_rules_add', 'serial_rules_apply',
-    'serial_rules_list', 'serial_rules_remove', 'serial_send', 'serial_tail',
+    'serial_marks', 'serial_open', 'serial_ports', 'serial_scan', 'serial_send', 'serial_tail',
   ]);
 });
 
