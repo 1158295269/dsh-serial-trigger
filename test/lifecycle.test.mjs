@@ -8,6 +8,14 @@ import { Store } from '../src/store.mjs';
 import { SerialService } from '../src/service.mjs';
 
 const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
+const waitFor = async (fn, ms = 2000) => {
+  const deadline = Date.now() + ms;
+  while (Date.now() < deadline) {
+    if (fn()) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return false;
+};
 
 function fakeCtx() {
   const listeners = new Map();
@@ -33,7 +41,7 @@ test('L1 a disposed session releases only its own ports', async (t) => {
   const b = await mounted.service.open({ port: 'MOCK:B', owner: { kind: 'session', id: 's2' } });
 
   ctx.emit('session/disposed', { id: 's1' });
-  await tick();
+  await waitFor(() => mounted.service.status(a.portId).state === 'closed');
 
   assert.equal(mounted.service.status(a.portId).state, 'closed');
   assert.equal(mounted.service.status(b.portId).state, 'open');
@@ -51,7 +59,7 @@ test('L2 disposing the plugin closes every open port', async (t) => {
   const dispose = ctx.listeners.get('dispose');
   assert.equal(typeof dispose, 'function');
   dispose();
-  await tick(150);
+  await waitFor(() => mounted.service.status(a.portId).state === 'closed');
 
   assert.equal(mounted.service.status(a.portId).state, 'closed');
 });

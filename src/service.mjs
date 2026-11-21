@@ -14,6 +14,7 @@ import { join, resolve } from 'node:path';
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';
 import { ScanRunner, normalizeMark, DEFAULT_TIMEOUT_MS } from './rules.mjs';
+import { Machine, simulate } from './fsm.mjs';
 export { SerialError };
 
 let nextPortId = 1;
@@ -33,6 +34,8 @@ export class SerialService {
     this.backend = opts.backend || createSerialBackend();
     // portId -> who took it over; a replaced port must not silently keep working
     this.replaced = new Map();
+    this.fsmRuns = new Map();
+    this.fsmSeq = 0;
     // Runtime-tunable settings; cordis config seeds them, serial_config updates them.
     this.settings = {
       idleLeaseMs: opts.idleLeaseMs ?? 30 * 60 * 1000,
@@ -556,6 +559,147 @@ export class SerialService {
   async cleanup(opts = {}) {
     if (opts.planId) return this.store.applyCleanup(opts.planId);
     return this.store.planCleanup(opts);
+  }
+
+  // --------------------------------------------------------------- state machine
+
+  /** Offline: prove a scenario against a recording before touching hardware. */
+  async fsmSimulate(captureId, { scenario, tailMs } = {}) {
+    const def = typeof scenario === 'string' ? JSON.parse(await import('node:fs/promises').then((m) => m.readFile(scenario, 'utf8'))) : scenario;
+    const { lines } = await this.store.readCaptureLines(captureId, { maxLines: 200000 });
+    const out = simulate(def, lines, { tailMs });
+    return { captureId, mode: 'simulate', ...out };
+  }
+
+  /** Live: bind a machine to one port. One run per port, owner must hold the port. */
+  async fsmStart({ scenario, portId, owner, timeoutMs } = {}) {
+    const def = typeof scenario === 'string' ? JSON.parse(await import('node:fs/promises').then((m) => m.readFile(scenario, 'utf8'))) : scenario;
+    const id = Number(portId);
+    const rec = this.ports.get(id);
+    if (!rec || rec.state !== 'open') {
+      throw new SerialError('E_PORT_NOT_FOUND', 'portId ' + portId + ' is not open', { hint: 'Open the port first.', fix: ['serial_open({port})'] });
+    }
+    if (owner && rec.owner && rec.owner.id !== owner.id) {
+      throw new SerialError('E_NOT_OWNER', 'portId ' + id + ' belongs to ' + describeOwner(rec.owner), {
+        hint: 'Starting a live machine writes to the port, so it requires ownership.',
+        fix: ['serial_open({port, takeover:true})'],
+      });
+    }
+    for (const [, run] of this.fsmRuns) {
+      if (run.portId === id && run.alive) {
+        throw new SerialError('E_FSM_BUSY', 'portId ' + id + ' already runs ' + run.id, {
+          hint: 'One machine per port: two machines would fight over the same bytes.',
+          fix: ['serial_fsm_stop({runId:"' + run.id + '"})'],
+        });
+      }
+    }
+    const runId = 'fsm-' + (++this.fsmSeq);
+    const machine = new Machine(def);
+    const run = { id: runId, machine, portId: id, owner: owner || null, alive: true, marks: [], startedAt: Date.now(), scenario: machine.name };
+    this.fsmRuns.set(runId, run);
+    const sub = this.hub.subscribe(TOPIC.STREAM, { filter: { portId: id }, cursor: this.hub.head(id) });
+    run.sub = sub;
+    const assembler = new LineAssembler({ lineEnding: 'any' });
+    (async () => {
+      try {
+        while (run.alive) {
+          const msg = await sub.next(250);
+          if (!msg) { this._fsmTick(run); continue; }
+          for (const line of assembler.feed(msg)) {
+            run.machine.feedLine(line.text, Date.now());
+            await this._fsmApply(run);
+          }
+        }
+      } catch { /* subscription closed */ }
+    })();
+    return { runId, mode: 'live', portId: id, status: machine.status() };
+  }
+
+  async _fsmApply(run) {
+    for (const action of run.machine.drainActions()) {
+      if (action.type === 'send') {
+        await this.send(run.portId, Buffer.from(action.text, 'utf8'), { owner: run.owner, force: true }).catch(() => {});
+      } else if (action.type === 'mark') {
+        run.marks.push({ at: action.at, label: action.label, severity: action.severity });
+      }
+    }
+    this._fsmNotify(run);
+  }
+
+  _fsmTick(run) {
+    const t = run.machine.tick(Date.now());
+    if (t.length) this._fsmApply(run);
+  }
+
+  _fsmNotify(run) {
+    for (const w of run.waiters || []) w(run.machine.status());
+    run.waiters = [];
+  }
+
+  async fsmEvent(runId, name) {
+    const run = this._run(runId);
+    run.machine.event(String(name), Date.now());
+    await this._fsmApply(run);
+    return { runId, status: run.machine.status(), marks: run.marks };
+  }
+
+  fsmStatus(runId) {
+    const run = this._run(runId);
+    return { runId, portId: run.portId, alive: run.alive, marks: run.marks, status: run.machine.status() };
+  }
+
+  /** Long-poll: resolve on the next transition or on timeout. */
+  async fsmWait(runId, { timeoutMs = 5000 } = {}) {
+    const run = this._run(runId);
+    const before = run.machine.trace.length;
+    if (run.machine.trace.length > before) return { runId, status: run.machine.status(), marks: run.marks };
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        resolve({ runId, status: run.machine.status(), marks: run.marks });
+      };
+      run.waiters = run.waiters || [];
+      run.waiters.push(finish);
+      setTimeout(finish, Math.max(50, timeoutMs));
+    });
+  }
+
+  async fsmStop(runId, opts = {}) {
+    const run = this._run(runId);
+    run.alive = false;
+    try { run.sub.close(); } catch { /* gone */ }
+    this.fsmRuns.delete(runId);
+    let marked = 0;
+    if (run.marks.length) {
+      const rec = this.ports.get(run.portId);
+      if (rec && rec.captureId) {
+        await this.store.writeMarks(rec.captureId, 'fsm-' + run.scenario, run.marks.map((m) => ({
+          anchor: { dir: 'rx', offset: 0, length: 0 }, t: m.at, kind: 'state', severity: m.severity || 'info', label: m.label,
+        })), { scenario: run.scenario, at: Date.now() }).catch(() => {});
+        marked = run.marks.length;
+      }
+    }
+    return { runId, stopped: true, persisted: opts.persistMarks !== false ? marked : 0, trace: run.machine.trace };
+  }
+
+  _run(runId) {
+    const run = this.fsmRuns.get(runId);
+    if (!run) throw new SerialError('E_NO_SUCH_RUN', 'no such run ' + runId, { hint: 'Machines are stopped when their session ends.', fix: ['serial_fsm_start'] });
+    return run;
+  }
+
+  /** Stop runs owned by identities that just went away. */
+  async stopRunsOwnedBy(ids, reason = 'owner-gone') {
+    const wanted = new Set((ids || []).filter(Boolean).map(String));
+    const stopped = [];
+    for (const [id, run] of [...this.fsmRuns]) {
+      if (!run.owner || !wanted.has(String(run.owner.id))) continue;
+      await this.fsmStop(id).catch(() => {});
+      stopped.push(id);
+    }
+    return stopped;
   }
 
   /** Close every open port and drop cursors. Idempotent. */
