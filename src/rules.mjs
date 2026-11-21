@@ -68,7 +68,7 @@ export class ScanRunner {
   }
 
   /** Start a run: push records, then finish() to get the marks. */
-  async start({ source, ctx = {}, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+  async start({ source, ctx = {}, timeoutMs = DEFAULT_TIMEOUT_MS, signal }) {
     const child = spawn(this.nodePath, [
       '--permission',
       '--allow-fs-read=' + CHILD,
@@ -86,6 +86,12 @@ export class ScanRunner {
     let buffer = '';
 
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, Math.max(1000, timeoutMs));
+    let aborted = false;
+    const onAbort = () => { aborted = true; child.kill(); };
+    if (signal) {
+      if (signal.aborted) { aborted = true; child.kill(); }
+      else signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     const finished = new Promise((res, rej) => {
       child.stdout.on('data', (chunk) => {
@@ -108,6 +114,14 @@ export class ScanRunner {
       child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
       child.on('close', (code) => {
         clearTimeout(timer);
+        if (signal) signal.removeEventListener('abort', onAbort);
+        if (aborted) {
+          return rej(new SerialError('E_SCAN_CANCELLED', 'scan cancelled by the caller', {
+            hint: 'The tool call was aborted; nothing was written.',
+            fix: ['serial_scan again if you still need it'],
+            retryable: true,
+          }));
+        }
         if (timedOut) {
           return rej(new SerialError('E_SCAN_TIMEOUT', 'scan exceeded ' + timeoutMs + 'ms and was killed', {
             hint: 'The script is stuck in a loop or scanning a huge buffer. Raise timeoutMs or fix the loop.',

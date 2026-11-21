@@ -10,7 +10,7 @@
  * the tree. Files are the source of truth.
  */
 import { DatabaseSync } from 'node:sqlite';
-import { mkdir, readdir, stat, unlink, writeFile, rename, readFile } from 'node:fs/promises';
+import { mkdir, readdir, stat, unlink, writeFile, rename, readFile, rm } from 'node:fs/promises';
 import { existsSync, createWriteStream } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join, dirname, basename } from 'node:path';
@@ -76,6 +76,7 @@ export class Store {
     this.dbPath = opts.dbPath || join(opts.root, 'index.db');
     this.db = null;
     this.writers = new Map();
+    this.cleanupPlans = new Map();
   }
 
   static async open(opts) {
@@ -313,6 +314,51 @@ export class Store {
     }
 
     return { path: outPath, format, bytes, lines };
+  }
+
+  /**
+   * Two-phase cleanup (SPEC §11): a dry run produces a plan, applying it deletes
+   * exactly those captures. Deleting is irreversible, so the plan is explicit.
+   */
+  async planCleanup({ olderThanDays = 0, keepLast = 0, project } = {}) {
+    const rows = this.listCaptures({ project, limit: 100000 });
+    const cutoff = Number(olderThanDays) > 0 ? Date.now() - Number(olderThanDays) * 86400000 : 0;
+    const victims = rows
+      .sort((a, b) => (b.startedMs || 0) - (a.startedMs || 0))
+      .filter((row, index) => index >= Number(keepLast || 0))
+      .filter((row) => !cutoff || (row.startedMs || 0) < cutoff);
+    const planId = 'clean-' + createHash('sha1').update(victims.map((v) => v.id).join('|') + Date.now()).digest('hex').slice(0, 10);
+    this.cleanupPlans.set(planId, { ids: victims.map((v) => v.id), at: Date.now() });
+    return {
+      planId,
+      dryRun: true,
+      count: victims.length,
+      bytes: victims.reduce((n, v) => n + (v.bytes || 0), 0),
+      items: victims.slice(0, 50).map((v) => ({ captureId: v.id, project: v.project, bytes: v.bytes, startedMs: v.startedMs })),
+      truncated: victims.length > 50,
+    };
+  }
+
+  async applyCleanup(planId) {
+    const plan = this.cleanupPlans.get(planId);
+    if (!plan) throw new SerialError('E_NO_SUCH_PLAN', 'no cleanup plan ' + planId, {
+      hint: 'Plans are short-lived. Run serial_cleanup({dryRun:true}) again to get a fresh one.',
+      fix: ['serial_cleanup({dryRun:true})'],
+    });
+    const removed = [];
+    const failed = [];
+    for (const id of plan.ids) {
+      try {
+        const dir = this.marksDir(id);
+        await this.deleteCapture(id);
+        await rm(ioPath(dir), { recursive: true, force: true }).catch(() => {});
+        removed.push(id);
+      } catch (err) {
+        failed.push({ captureId: id, error: err.code || err.message });
+      }
+    }
+    this.cleanupPlans.delete(planId);
+    return { planId, removed: removed.length, failed, freedIds: removed.slice(0, 50) };
   }
 
   /** Absolute path of a capture file. */
