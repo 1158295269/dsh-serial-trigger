@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { apply } from '../src/index.mjs';
+import { apply, currentMount } from '../src/index.mjs';
 import { Store } from '../src/store.mjs';
 import { SerialService } from '../src/service.mjs';
 
@@ -25,7 +25,8 @@ function fakeCtx() {
 test('L1 a disposed session releases only its own ports', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'life-'));
   const ctx = fakeCtx();
-  const mounted = await apply(ctx, { dataRoot: join(root, 'data') });
+  await apply(ctx, { dataRoot: join(root, 'data') });
+  const mounted = currentMount();
   t.after(async () => { await mounted.service.dispose(); });
 
   const a = await mounted.service.open({ port: 'MOCK:A', owner: { kind: 'session', id: 's1' } });
@@ -41,15 +42,16 @@ test('L1 a disposed session releases only its own ports', async (t) => {
 test('L2 disposing the plugin closes every open port', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'life2-'));
   const ctx = fakeCtx();
-  const mounted = await apply(ctx, { dataRoot: join(root, 'data') });
+  await apply(ctx, { dataRoot: join(root, 'data') });
+  const mounted = currentMount();
   const a = await mounted.service.open({ port: 'MOCK:C', owner: { kind: 'agent', id: 'x' } });
   assert.equal(mounted.service.status(a.portId).state, 'open');
 
-  // the last registered effect is the shutdown hook
-  const stop = ctx.effects[ctx.effects.length - 1];
-  assert.equal(typeof stop, 'function');
-  stop();
-  await tick(120);
+  // teardown is wired through the dispose event
+  const dispose = ctx.listeners.get('dispose');
+  assert.equal(typeof dispose, 'function');
+  dispose();
+  await tick(150);
 
   assert.equal(mounted.service.status(a.portId).state, 'closed');
 });

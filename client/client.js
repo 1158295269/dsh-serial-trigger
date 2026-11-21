@@ -196,6 +196,47 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => { ensureStyles() }, [])
 
+      // DSH renders the chat composer under every conversation view. When our
+      // view is the visible one, hide it so the panel owns the full height.
+      React.useEffect(() => {
+        let hidden = null
+        const findComposer = () => {
+          const root = rootRef.current
+          if (!root) return null
+          const inputs = [...document.querySelectorAll('[contenteditable="true"]')]
+            .filter((n) => !root.contains(n) && n.getBoundingClientRect().width > 300)
+          const input = inputs[inputs.length - 1]
+          if (!input) return null
+          let box = input
+          for (let i = 0; i < 6 && box.parentElement; i += 1) {
+            box = box.parentElement
+            if (box.getBoundingClientRect().height > 70) break
+          }
+          return box
+        }
+        const tick = () => {
+          const root = rootRef.current
+          const visible = !!root && root.getBoundingClientRect().height > 100
+          if (visible) {
+            const box = findComposer()
+            if (box && box.style.display !== 'none') {
+              box.style.display = 'none'
+              hidden = box
+            }
+          } else if (hidden) {
+            hidden.style.display = ''
+            hidden = null
+          }
+        }
+        tick()
+        const timer = setInterval(tick, 600)
+        return () => {
+          clearInterval(timer)
+          if (hidden) hidden.style.display = ''
+        }
+      }, [])
+
+
       React.useLayoutEffect(() => {
         const el = rootRef.current
         const host = el && el.parentElement

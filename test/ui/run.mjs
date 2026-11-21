@@ -180,6 +180,35 @@ if (!only || only === 'occupied-label') {
   await api('POST', '/serial/close', { portId: opened.json?.portId, sessionId: 'session-other' });
 }
 
+
+// S8: the chat composer is hidden while the serial view is active
+if (!only || only === 'composer') {
+  await openSession(page);
+  await sleep(1500);
+  await openSerialView(page);
+  await sleep(1600);
+  const inSerial = await page.eval(`(() => {
+    const root = document.querySelector('.sst-root');
+    const inputs = [...document.querySelectorAll('[contenteditable="true"]')]
+      .filter((n) => !root.contains(n) && n.getBoundingClientRect().width > 300);
+    const visible = inputs.filter((n) => n.offsetParent !== null).length;
+    return { composerVisible: visible, panelH: Math.round(root.getBoundingClientRect().height) };
+  })()`);
+
+  await page.clickText('对话');
+  await sleep(1200);
+  const inChat = await page.eval(`(() => {
+    const inputs = [...document.querySelectorAll('[contenteditable="true"]')]
+      .filter((n) => n.getBoundingClientRect().width > 300);
+    return { composerVisible: inputs.filter((n) => n.offsetParent !== null).length };
+  })()`);
+
+  await page.screenshot(join(outDir, 'composer.png'), fs);
+  record('composer: 串口视图隐藏输入框、切回对话恢复',
+    inSerial.composerVisible === 0 && inChat.composerVisible > 0,
+    'serial=' + JSON.stringify(inSerial) + ' chat=' + JSON.stringify(inChat));
+}
+
 const pass = results.filter((r) => r.ok).length;
 console.log('\nsummary: ' + pass + '/' + results.length);
 console.log('console errors:', page.console.filter((l) => /error|EXCEPTION/i.test(l)).slice(0, 5).join(' | ') || '(none)');
