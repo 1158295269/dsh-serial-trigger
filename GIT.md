@@ -57,7 +57,7 @@ git switch feature/xxx
 
 # 2. 把 main 的最新改动变基到分支上，冲突在分支里解决
 git switch main
-git merge --ff-only            # 保证本地 main 是最新的
+git pull --ff-only             # 有远端时；纯本地仓库跳过这行
 git switch feature/xxx
 git rebase main
 
