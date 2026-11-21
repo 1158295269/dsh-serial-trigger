@@ -78,6 +78,8 @@ export class SerialService {
         captureId: open ? open.captureId : null,
         bytesRx: open ? open.bytesRx : 0,
         bytesTx: open ? open.bytesTx : 0,
+        owner: open ? open.owner : null,
+        idleForMs: open ? Date.now() - (open.lastActivity || open.started || Date.now()) : 0,
       };
     });
     // Anything we hold open but the driver did not enumerate (mock ports, or a
@@ -92,6 +94,7 @@ export class SerialService {
         portId: rec.id, port: rec.name, friendlyName: rec.kind === 'mock' ? '模拟端口' : '',
         baudRate: rec.baud, state: rec.state, captureId: rec.captureId,
         bytesRx: rec.bytesRx, bytesTx: rec.bytesTx,
+        owner: rec.owner, idleForMs: Date.now() - (rec.lastActivity || rec.started || Date.now()),
       });
     }
 

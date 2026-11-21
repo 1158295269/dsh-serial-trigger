@@ -166,3 +166,14 @@ test('A9 every route path is unique (the webserver keys by path)', async () => {
   const dupes = paths.filter((p, i) => paths.indexOf(p) !== i);
   assert.deepEqual(dupes, [], 'duplicate paths: ' + dupes.join(', '));
 });
+
+
+test('A10 state exposes the owner of an open port', async (t) => {
+  const { service, call } = await box();
+  t.after(() => service.dispose());
+  const opened = await call('POST', '/serial/open', { body: { port: 'MOCK:OWN', sessionId: 'session-x' } });
+  const state = await call('GET', '/serial/state');
+  const row = state.body.ports.find((p) => p.portId === opened.body.portId);
+  assert.ok(row, 'the open port must be listed');
+  assert.deepEqual(row.owner, { kind: 'session', id: 'session-x' });
+});

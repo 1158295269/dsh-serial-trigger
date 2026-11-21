@@ -129,6 +129,57 @@ if (!only || only === 'ownership') {
   }));
 }
 
+
+// S6: switching sessions must change the identity the panel uses
+if (!only || only === 'identity-switch') {
+  const readId = async () => {
+    const status = await page.text('.sst-status');
+    const m = /身份\s*(\S+)/.exec(status || '');
+    return m ? m[1] : '';
+  };
+  await page.clickText('dsh-publisher-radar 是什么', { exact: false });
+  await sleep(2500);
+  await openSerialView(page);
+  await sleep(1200);
+  const idA = await readId();
+
+  await page.clickText('三家订阅性价比口碑对比', { exact: false });
+  await sleep(2500);
+  await openSerialView(page);
+  await sleep(1200);
+  const idB = await readId();
+
+  record('identity-switch: 切会话后身份跟随', !!idA && !!idB && idA !== idB, idA + ' -> ' + idB);
+}
+
+
+// S7: a port opened by another session must read as 被占用 in this panel
+if (!only || only === 'occupied-label') {
+  const boot = await fetch(BASE + '/?token=' + TOKEN, { redirect: 'manual' });
+  const cookie = (boot.headers.getSetCookie?.() ?? [boot.headers.get('set-cookie') ?? ''])[0].split(';')[0];
+  const api = async (method, path, body) => {
+    const res = await fetch(BASE + path, {
+      method,
+      headers: { cookie, ...(body ? { 'content-type': 'application/json' } : {}) },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    return { status: res.status, json: await res.json().catch(() => null) };
+  };
+
+  const opened = await api('POST', '/serial/open', { port: 'MOCK:UIT', baudRate: 115200, sessionId: 'session-other' });
+  await openSerialView(page);
+  await sleep(800);
+  // the panel polls /serial/state every 1.5 s; give it one cycle
+  await sleep(2000);
+  const side = await page.text('.sst-side');
+  const row = (side || '').split('\n').find((l) => l.includes('MOCK:UIT')) || '';
+  const status = await page.text('.sst-status');
+  const me = (/身份\s*(\S+)/.exec(status || '') || [])[1] || '';
+  const marked = /被占用/.test(side || '');
+  record('occupied-label: 他人端口显示被占用', marked && opened.status === 200, 'row=' + row + ' me=' + me);
+  await api('POST', '/serial/close', { portId: opened.json?.portId, sessionId: 'session-other' });
+}
+
 const pass = results.filter((r) => r.ok).length;
 console.log('\nsummary: ' + pass + '/' + results.length);
 console.log('console errors:', page.console.filter((l) => /error|EXCEPTION/i.test(l)).slice(0, 5).join(' | ') || '(none)');
