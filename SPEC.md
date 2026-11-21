@@ -562,3 +562,26 @@ ctx.slots.register({ name: 'conversation.view', id: 'serial-trigger', order: 20,
 `serial_fsm_start/event/wait/status/stop/simulate` 六个工具、一端口一机器、
 端口所有权校验、会话销毁时 `stopRunsOwnedBy`。
 COM8 实测：心跳驱动转移、发送 PING 后等待 `ECHO PING` 才进入下一状态（5/5）。
+
+
+### 23.5 所有权模型（2026-11-22 修订）
+
+前提：串口主要给模型操作，用户只需要"看得见"。
+
+**一个端口只有一个写者，其余所有人只读。**
+
+| 角色 | 写 | 读 |
+|---|---|---|
+| 模型（工具） | 一律自动接管，无需确认 | 是 |
+| 面板（持有中） | 是 | 是 |
+| 面板（他人持有） | 否，只读态 | 是，走 `serial_tail` 读 ring buffer |
+
+规则：
+
+1. `serial_open`（工具路径）等价于 `takeover: true`；被顶掉的会话正常收尾并落盘
+2. 面板在端口被他人持有时进入只读：发送框禁用，提示「只读 · 由 Agent 持有」
+3. 接管必须可见：面板显示「已被接管」，避免用户以为自己的写入成功
+4. 只读不消耗句柄：任何会话都能 `serial_tail` 任意已打开端口
+
+由此**取消**：agent/session 身份映射、`E_PORT_BUSY` 拒绝路径、接管确认对话框（对模型）。
+保留：单写者约束、被顶掉会话的收尾、标记与录制的归属。
