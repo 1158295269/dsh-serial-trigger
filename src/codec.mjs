@@ -234,7 +234,13 @@ export class SlogReader {
           out.lastT = rec.tMonoUs;
           out.lastWall = rec.tWallMs;
           out.endOffset += total;
-          if (onRecord) onRecord(rec);
+          if (onRecord) {
+          // Awaited so consumers keep their own backpressure, and a false return
+          // lets a scan stop early (grep once it has enough hits).
+          const stop = await onRecord(rec);
+          if (stop === false) break;
+          if ((out.records & 127) === 0) await new Promise((r) => setImmediate(r));
+        }
           carry = carry.subarray(total);
           continue;
         }
