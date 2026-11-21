@@ -129,7 +129,16 @@ export class SerialService {
   async open(opts) {
     const { port, baudRate = 115200, project = 'default', conversation = 'session', sessionId = '' } = opts;
     const owner = opts.owner || { kind: 'agent', id: 'unknown' };
-    const existing = this.byName.get(port);
+    const norm = String(port).toLowerCase();
+    let existing = this.byName.get(port);
+    if (existing === undefined) {
+      // byName may be keyed differently from the caller's spelling, so fall back
+      // to a case-insensitive scan; otherwise a second open silently steals the
+      // device handle from the first owner.
+      for (const [id, r] of this.ports) {
+        if (r.state === 'open' && String(r.name).toLowerCase() === norm) { existing = id; break; }
+      }
+    }
     const held = existing === undefined ? null : this.ports.get(existing);
     if (held && held.state === 'open') {
       if (!opts.takeover) {
