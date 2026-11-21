@@ -585,3 +585,17 @@ COM8 实测：心跳驱动转移、发送 PING 后等待 `ECHO PING` 才进入�
 
 由此**取消**：agent/session 身份映射、`E_PORT_BUSY` 拒绝路径、接管确认对话框（对模型）。
 保留：单写者约束、被顶掉会话的收尾、标记与录制的归属。
+
+#### 23.5.1 落地（v0.3.1）
+
+| 层 | 行为 |
+|---|---|
+| `SerialService.open` | 新增 `autoTakeover`；与显式 `takeover` 等价，命中已开端口时先 `close(force, reason:'takeover')`，对方的录制正常收尾落盘 |
+| `SerialService.close` | 关闭端口前先停掉绑定在该端口上的状态机（`_stopRunsForPort`），机器不会挂在死环上继续跑 |
+| `serial_open`（工具） | 固定传 `autoTakeover:true` 与调用者身份 `{kind:'agent', id:exec.agent}`；子 agent 沿用父身份 |
+| `serial_send`（工具） | 带上调用者身份：非持有者得到 `E_NOT_OWNER`，提示先 `serial_open` 接管，而不是静默写入 |
+| 面板 | 点他人端口 = 只读观看（不弹确认、不抢写）；发送框禁用并显示「只读 · 由 Agent 持有」；显式「接管写入」按钮才走 `takeover` |
+| 面板（被接管） | 自己的 portId 消失且同名端口换了主人时自动跟到新 portId，显示「已被接管 · 只读」，读数不中断 |
+| 面板（状态机卡片） | 只读态不渲染事件按钮：机器属于端口持有者，观众只能看 |
+
+对模型仍然没有 `E_PORT_BUSY`；该错误码只留给直接调库或面板未声明 `takeover` 的路径。
