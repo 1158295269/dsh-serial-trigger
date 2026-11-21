@@ -504,3 +504,39 @@ Agent 一次思考几秒到几十秒，而设备状态机的窗口可能只有�
 
 状态机卡在某状态超时 → 自动产出一条 `fault` 标记（走 21.4 的同一结构），
 Agent 下次读 `serial_marks` 就能看到“卡在哪一步、当时的字节是什么”，不需要重新抓。
+
+
+---
+
+## 23. 会话视图与端口所有权（v0.2.1）
+
+### 23.1 面板挂在会话内
+
+面板注册到 `conversation.view`，成为「对话」「轨迹」旁边的第三个标签：
+
+```js
+ctx.slots.register({ name: 'conversation.view', id: 'serial-trigger', order: 20, label: () => '串口', inject: (sessionId) => ({ sessionId }) }, Panel)
+```
+
+**不再使用 `main` 槽位**：那个槽会替换整个主区域，切过去会丢掉会话绑定。
+
+### 23.2 调用者身份
+
+| 来源 | 身份 | 获取方式 |
+|---|---|---|
+| 面板 | `{ kind:'session', id: sessionId }` | 槽位 `inject` |
+| 工具 | `{ kind:'agent', id: exec.agent }` | 宿主传入的 exec 上下文 |
+
+子 agent 通过 `exec.parent` 回溯到根，**继承父会话的所有权**。
+
+### 23.3 访问规则
+
+| 操作 | 规则 |
+|---|---|
+| 列表 / tail / marks / captures / bytes | 全员可见（默认 `scope: all`） |
+| `serial_open`（端口被占） | `E_PORT_BUSY`，提示占用者 |
+| `serial_open({takeover:true})` | 先结束对方录制（正常收尾），再打开 |
+| `serial_close` / `serial_send` | 仅 owner；非 owner 传 `force:true` 可强行 |
+| 被接管后的旧 portId | `E_PORT_REPLACED`，附接管者与端口名 |
+
+`serial_ports` 每条返回 `owner` 与 `idleForMs`。

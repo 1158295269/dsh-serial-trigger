@@ -25,7 +25,8 @@ test('B3 the client bundle registers the expected module id', async () => {
   const src = await readFile(join(root, 'client', 'client.js'), 'utf8');
   assert.match(src, /__ModuleLoader__\.load\(/);
   assert.match(src, /id: 'dsh-serial-trigger'/);
-  assert.match(src, /sidebar\.panellist/);
+  assert.match(src, /conversation\.view/);
+  assert.doesNotMatch(src, /name: 'main'/, 'the panel must not replace the main view: that drops the session');
   assert.match(src, /exports\.apply = apply/);
 });
 
