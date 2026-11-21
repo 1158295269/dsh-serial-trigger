@@ -150,7 +150,8 @@ window.__ModuleLoader__.load({
         h('path', { d: line, fill: 'none', stroke: '#4f8ff0', strokeWidth: 2, strokeLinejoin: 'round' }))
     }
 
-    function Panel() {
+    function Panel(props) {
+      const sessionId = (props && props.sessionId) || ''
       const [state, setState] = React.useState({ ports: [], captures: [] })
       const [active, setActive] = React.useState(null)
       const [lines, setLines] = React.useState([])
@@ -294,10 +295,10 @@ window.__ModuleLoader__.load({
         return () => clearTimeout(id)
       }, [toast])
 
-      const open = async (port) => {
+      const open = async (port, opts) => {
         setError('')
         try {
-          const res = await api('POST', '/open', { port, baudRate: 115200, project: 'default', })
+          const res = await api('POST', '/open', { port, baudRate: 115200, project: 'default', sessionId, takeover: !!(opts && opts.takeover) })
           cursor.current = 0
           setLines([]); setRates([]); setPeak(0); setPending(null); lastSample.current = null
           setActive(res.portId)
@@ -592,12 +593,20 @@ window.__ModuleLoader__.load({
               h('div', {
                 key: i,
                 className: 'sst-port' + (p.portId !== null && p.portId === active ? ' on' : ''),
-                onClick: () => (p.state === 'open' ? setActive(p.portId) : open(p.port)),
+                onClick: () => {
+                  const mine = !p.owner || p.owner.id === sessionId
+                  if (p.state === 'open' && mine) { setActive(p.portId); return }
+                  if (p.state === 'open' && !mine) {
+                    if (window.confirm('端口已被 ' + (p.owner && p.owner.id) + ' 占用，接管会先结束对方的录制。继续？')) open(p.port, { takeover: true })
+                    return
+                  }
+                  open(p.port)
+                },
               },
                 h('span', { className: 'sst-dot' + (p.state === 'open' ? ' on' : '') }),
                 h('div', null,
                   h('div', { className: 'sst-name' }, p.port),
-                  h('div', { className: 'sst-meta' }, p.baudRate ? p.baudRate + ' · 8N1' : (p.state === 'open' ? '已连接' : '可用')))))),
+                  h('div', { className: 'sst-meta' }, p.baudRate ? (p.baudRate + ' · 8N1' + (p.state === 'open' && p.owner && p.owner.id !== sessionId ? ' · 被占用' : '')) : (p.state === 'open' ? '已连接' : '可用')))))),
           h('div', { className: 'sst-sec' }, h('h4', null, '本次录制'),
             activeMeta
               ? h('div', { className: 'sst-rec on' },
@@ -736,18 +745,16 @@ window.__ModuleLoader__.load({
           console.error('serial-trigger: this DSH has no slots service; the panel stays unmounted')
           return
         }
-        ctx.slots.inject('main', () =>
-          ctx.slots.inject('sidebar.panellist', () => {
-            const stopMain = ctx.slots.register({ name: 'main', key: PANEL_ID }, Panel)
-            const stopIcon = ctx.slots.register(
-              { name: 'sidebar.panellist', id: PANEL_ID, order: 77, label: () => '串口助手' },
-              Icon,
-            )
-            return () => {
-              if (typeof stopIcon === 'function') stopIcon()
-              if (typeof stopMain === 'function') stopMain()
-            }
-          }),
+        // "main" replaces the whole conversation area and drops the session.
+        // A conversation.view is a tab inside the session, next to 对话/轨迹.
+        ctx.slots.inject('conversation.view', () =>
+          ctx.slots.register({
+            name: 'conversation.view',
+            id: 'serial-trigger',
+            order: 20,
+            label: () => '串口',
+            inject: (sessionId) => ({ sessionId }),
+          }, Panel),
         )
       } catch (error) {
         console.error('serial-trigger: registering the panel failed', error)
