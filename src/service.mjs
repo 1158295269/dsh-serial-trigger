@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';
-import { RuleEngine, normalizeMark, DEFAULT_TIMEOUT_MS } from './rules.mjs';
+import { ScanRunner, normalizeMark, DEFAULT_TIMEOUT_MS } from './rules.mjs';
 export { SerialError };
 
 let nextPortId = 1;
@@ -23,9 +23,11 @@ export class SerialService {
     this.hub = opts.hub || new Hub(opts.hubOptions || {});
     this.store = opts.store;
     this.backend = opts.backend || createSerialBackend();
-    // Rules are workspace assets: <workspace>/.serial/rules, overridable.
-    this.rulesRoot = opts.rulesRoot || join(opts.workspaceRoot || process.cwd(), '.serial', 'rules');
-    this.engine = opts.engine || new RuleEngine({ rulesRoot: this.rulesRoot, nodePath: opts.nodePath });
+    // Scan scripts live in the workspace; the plugin keeps no registry.
+    this.scanRunner = opts.runner || new ScanRunner({
+      nodePath: opts.nodePath,
+      roots: opts.scanRoots || [opts.workspaceRoot || process.cwd()],
+    });
     this.config = opts.config || {};
     this.ports = new Map();      // portId -> record
     this.byName = new Map();     // name -> portId
@@ -342,64 +344,47 @@ export class SerialService {
     return this.store.deleteCapture(captureId);
   }
 
-  // ---------------------------------------------------------------- rules
-
-  async rulesAdd({ name, source, meta }) {
-    const res = await this.engine.install({ name, source, meta });
-    return { ...res, rulesRoot: this.rulesRoot };
-  }
-
-  async rulesList() {
-    return { rulesRoot: this.rulesRoot, rules: await this.engine.list() };
-  }
-
-  async rulesRemove(name) {
-    return this.engine.remove(name);
-  }
+  // ------------------------------------------------------------- scans
 
   /**
-   * Re-scan a capture with one or more rules. Marks are produced by the rule,
-   * never by the caller: this is the only path that can create them.
+   * Run one scan script over one capture. The caller passes a path: the script
+   * belongs to the workspace, so it can be reviewed, diffed and re-run without
+   * the plugin owning a registry.
    */
-  async rulesApply(captureId, { rules, timeoutMs } = {}) {
-    const capture = this.store.capturePath(captureId);
-    const installed = await this.engine.list();
-    const wanted = Array.isArray(rules) && rules.length ? rules : installed.map((r) => r.name);
-    if (wanted.length === 0) {
-      throw new SerialError('E_NO_SUCH_RULE', 'no rules are installed', {
-        hint: 'Install one with serial_rules_add({name, source}) first.',
-        fix: ['serial_rules_add', 'serial_rules_apply'],
+  async scan(captureId, { script, label, timeoutMs } = {}) {
+    const loaded = await this.scanRunner.load(script);
+    const name = label ? String(label) : loaded.label;
+    const run = await this.scanRunner.start({
+      source: loaded.source,
+      ctx: { captureId, script: loaded.path },
+      timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_TIMEOUT_MS,
+    });
+    let scanned = 0;
+    try {
+      await this.store.scanCapture(captureId, async (rec) => {
+        scanned += rec.length;
+        await run.push(rec);
       });
-    }
-    const results = [];
-    for (const name of wanted) {
-      const source = await this.engine.read(name);
-      const run = await this.engine.start({
-        source,
-        ctx: { captureId, path: capture },
-        timeoutMs: Number(timeoutMs) > 0 ? Number(timeoutMs) : DEFAULT_TIMEOUT_MS,
+      const { marks, truncated } = await run.finish();
+      const normalized = marks.map((m) => normalizeMark(m, name)).filter(Boolean);
+      const written = await this.store.writeMarks(captureId, name, normalized, {
+        script: loaded.path,
+        scannedAt: Date.now(),
+        timeoutMs: Number(timeoutMs) || DEFAULT_TIMEOUT_MS,
       });
-      let scanned = 0;
-      try {
-        await this.store.scanCapture(captureId, async (rec) => {
-          scanned += rec.length;
-          await run.push(rec);
-        });
-        const { marks, truncated } = await run.finish();
-        const normalized = marks.map((m) => normalizeMark(m, name)).filter(Boolean);
-        const written = await this.store.writeMarks(captureId, name, normalized);
-        results.push({ rule: name, scannedBytes: scanned, marks: normalized.length, truncated, file: written.file });
-      } catch (err) {
-        run.kill();
-        results.push({ rule: name, scannedBytes: scanned, marks: 0, error: { code: err.code || 'E_RULE_FAILED', message: err.message } });
-      }
+      return {
+        captureId, label: name, script: loaded.path, scannedBytes: scanned,
+        marks: normalized.length, truncated, file: written.file,
+      };
+    } catch (err) {
+      run.kill();
+      throw err;
     }
-    return { captureId, results };
   }
 
   /** Marks plus a byte-range window per mark: references only, never text. */
   async marks(captureId, { rule, severity, beforeMs = 300, afterMs = 1000 } = {}) {
-    const marks = await this.store.readMarks(captureId, { rule, severity });
+    const { marks, sources } = await this.store.readMarks(captureId, { rule, severity });
     const timeline = marks.length ? await this.store.captureTimeline(captureId) : [];
     const enriched = marks.map((mark) => {
       const dir = mark.anchor?.dir || 'rx';
@@ -416,7 +401,7 @@ export class SerialService {
       }
       return { ...mark, window: { dir, offset: start, length: Math.max(0, end - start) } };
     });
-    return { captureId, count: enriched.length, marks: enriched };
+    return { captureId, count: enriched.length, sources, marks: enriched };
   }
 
   /** Materialise bytes addressed by a mark. Text is a convenience, hex is truth. */

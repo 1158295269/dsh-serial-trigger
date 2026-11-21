@@ -95,18 +95,11 @@ export function createApi(service, settings = {}) {
       return ok({ ok: true, ...res });
     },
 
-    'GET /serial/rules': async () => ok(await service.rulesList()),
-
-    'POST /serial/rules/add': async (ctx) => {
-      const body = ctx.body || {};
-      if (!body.name || !body.source) return bad('E_INVALID_ARGS', 'name and source are required', 'Pass the rule module source.');
-      return ok(await service.rulesAdd(body));
-    },
-
-    'POST /serial/rules/apply': async (ctx) => {
+    'POST /serial/scan': async (ctx) => {
       const body = ctx.body || {};
       if (!body.captureId) return bad('E_INVALID_ARGS', 'captureId is required', 'Pick a capture from the sidebar.');
-      return ok(await service.rulesApply(body.captureId, body));
+      if (!body.script) return bad('E_INVALID_ARGS', 'script is required', 'Pass the path of a scan script.');
+      return ok(await service.scan(body.captureId, body));
     },
 
     'GET /serial/marks': async (ctx) => {

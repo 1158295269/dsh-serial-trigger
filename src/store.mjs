@@ -356,11 +356,13 @@ export class Store {
     return path.replace(/\.slog$/, '') + '.marks';
   }
 
-  async writeMarks(captureId, rule, marks) {
+  async writeMarks(captureId, label, marks, meta = {}) {
     const dir = this.marksDir(captureId);
     await mkdir(ioPath(dir), { recursive: true });
-    const file = join(dir, rule + '.jsonl');
-    const body = marks.map((m) => JSON.stringify(m)).join('\n') + (marks.length ? '\n' : '');
+    const file = join(dir, label + '.jsonl');
+    const lines = [JSON.stringify({ type: 'meta', label, ...meta })];
+    for (const m of marks) lines.push(JSON.stringify(m));
+    const body = lines.join('\n') + '\n';
     const tmp = file + '.tmp';
     await writeFile(ioPath(tmp), body, 'utf8');
     await rename(ioPath(tmp), ioPath(file));
@@ -376,6 +378,7 @@ export class Store {
       return [];
     }
     const marks = [];
+    const metas = [];
     for (const name of files) {
       if (!name.endsWith('.jsonl')) continue;
       const ruleName = name.replace(/\.jsonl$/, '');
@@ -384,14 +387,15 @@ export class Store {
       for (const line of body.split('\n')) {
         if (!line.trim()) continue;
         try {
-          const mark = JSON.parse(line);
-          if (severity && mark.severity !== severity) continue;
-          marks.push(mark);
+          const parsed = JSON.parse(line);
+          if (parsed.type === 'meta') { metas.push(parsed); continue; }
+          if (severity && parsed.severity !== severity) continue;
+          marks.push(parsed);
         } catch { /* skip corrupt line */ }
       }
     }
     marks.sort((a, b) => (a.t || 0) - (b.t || 0) || (a.anchor?.offset || 0) - (b.anchor?.offset || 0));
-    return marks;
+    return { marks, sources: metas };
   }
 
   /** Decode a capture into lines for read-only viewing. Capped to keep memory sane. */
