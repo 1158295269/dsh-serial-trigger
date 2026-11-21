@@ -190,6 +190,9 @@ window.__ModuleLoader__.load({
       const lastQuery = React.useRef('')
 
       const cursor = React.useRef(0)
+      const activeRef = React.useRef(null)
+      const readOnlyRef = React.useRef(false)
+      const lastPortName = React.useRef(null)
       const followRef = React.useRef(true)
       const logRef = React.useRef(null)
       const lastSample = React.useRef(null)
@@ -202,6 +205,8 @@ window.__ModuleLoader__.load({
         const stop = () => { if (card && card.parentElement) card.remove(); card = null }
         const tick = async () => {
           if (!side()) return
+          // The machine belongs to the port owner; a read-only panel only looks.
+          if (readOnlyRef.current) { stop(); return }
           let runs = []
           try { runs = (await api('GET', '/fsm?portId=' + (active || ''))).runs || [] } catch { runs = [] }
           if (!runs.length) { stop(); return }
@@ -326,10 +331,37 @@ window.__ModuleLoader__.load({
       }, [tab, view])
       React.useEffect(() => { followRef.current = follow }, [follow])
 
+      React.useEffect(() => { activeRef.current = active }, [active])
+
+      // One writer per port (SPEC 23.5). When another owner takes the port this
+      // panel was watching, follow the same device into read-only instead of
+      // leaving a frozen view on a dead portId.
       React.useEffect(() => {
         let alive = true
+        const reset = () => {
+          cursor.current = 0
+          setLines([]); setRates([]); setPeak(0); setPending(null); lastSample.current = null
+        }
         const tick = async () => {
-          try { const s = await api('GET', '/state'); if (alive) setState(s) } catch (e) { /* boot */ }
+          let s = null
+          try { s = await api('GET', '/state') } catch (e) { s = null }
+          if (!alive || !s) return
+          setState(s)
+          const cur = activeRef.current
+          if (cur === null) return
+          const ports = s.ports || []
+          const mine = ports.find((p) => p.portId === cur && p.state === 'open')
+          if (mine) { lastPortName.current = mine.port; return }
+          // Our portId is gone. If the same device came back under another
+          // owner, keep showing its bytes; otherwise the device is simply closed.
+          const name = lastPortName.current
+          const heir = name ? ports.find((p) => p.state === 'open' && String(p.port).toLowerCase() === String(name).toLowerCase()) : null
+          if (!heir) { setActive(null); setToast('端口已关闭'); return }
+          reset()
+          setActive(heir.portId)
+          const foreign = !!heir.owner && heir.owner.id !== sessionId
+          setTakenOver(foreign)
+          if (foreign) setToast('端口已被接管，转为只读')
         }
         tick()
         const id = setInterval(tick, 1500)
@@ -411,6 +443,8 @@ window.__ModuleLoader__.load({
           const res = await api('POST', '/open', { port, baudRate: 115200, project: 'default', sessionId, takeover: !!(opts && opts.takeover) })
           cursor.current = 0
           setLines([]); setRates([]); setPeak(0); setPending(null); lastSample.current = null
+          lastPortName.current = port
+          setTakenOver(false)
           setActive(res.portId)
         } catch (e) { setError(String(e.message || e)) }
       }
@@ -422,12 +456,23 @@ window.__ModuleLoader__.load({
       }
 
       const send = async () => {
-        if (!active || !draft) return
+        if (!active || !draft || readOnly) return
         try { await api('POST', '/send', { portId: active, text: draft, append: 'crlf' }); setDraft('') }
         catch (e) { setError(String(e.message || e)) }
       }
 
+      // Taking the pen back is explicit: the default for an occupied port is to
+      // watch it read-only, so a stray click cannot end an agent's recording.
+      const takeOver = () => {
+        const meta = activeMeta
+        if (!meta) return
+        const who = (meta.owner && meta.owner.id) || '对方'
+        if (!window.confirm('接管会结束 ' + who + ' 的录制，之后由你写入。继续？')) return
+        open(meta.port, { takeover: true })
+      }
+
       const [draft, setDraft] = React.useState('')
+      const [takenOver, setTakenOver] = React.useState(false)
       const baseVisible = filter === 'all' ? lines : lines.filter((l) => l.dir === filter)
       const visible = onlyMarks && marks.length
         ? baseVisible.filter((l) => marks.some((m) => Math.abs((l.t || 0) - (m.t || 0)) <= 1000))
@@ -562,6 +607,10 @@ window.__ModuleLoader__.load({
         } catch (e) { setToast(String(e.message || e)) }
       }
       const activeMeta = active === null ? null : state.ports.find((p) => p.portId === active)
+      // Single writer (SPEC 23.5): if the port belongs to someone else, this
+      // panel watches and never writes.
+      const readOnly = !!(activeMeta && activeMeta.owner && activeMeta.owner.id !== sessionId)
+      React.useEffect(() => { readOnlyRef.current = readOnly }, [readOnly])
 
       // Monospace + known column count = exact row counts, so a wrapped list can
       // still be virtualised without measuring a single DOM node.
@@ -704,10 +753,11 @@ window.__ModuleLoader__.load({
                 key: i,
                 className: 'sst-port' + (p.portId !== null && p.portId === active ? ' on' : ''),
                 onClick: () => {
-                  const mine = !p.owner || p.owner.id === sessionId
-                  if (p.state === 'open' && mine) { setActive(p.portId); return }
-                  if (p.state === 'open' && !mine) {
-                    if (window.confirm('端口已被 ' + (p.owner && p.owner.id) + ' 占用，接管会先结束对方的录制。继续？')) open(p.port, { takeover: true })
+                  if (p.state === 'open') {
+                    // Watching an occupied port is free; taking the pen is a
+                    // separate, explicit action (the 接管写入 button).
+                    setActive(p.portId)
+                    lastPortName.current = p.port
                     return
                   }
                   open(p.port)
@@ -716,7 +766,7 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'sst-dot' + (p.state === 'open' ? ' on' : '') }),
                 h('div', null,
                   h('div', { className: 'sst-name' }, p.port),
-                  h('div', { className: 'sst-meta' }, p.baudRate ? (p.baudRate + ' · 8N1' + (p.state === 'open' && p.owner && p.owner.id !== sessionId ? ' · 被占用' : '')) : (p.state === 'open' ? '已连接' : '可用')))))),
+                  h('div', { className: 'sst-meta' }, p.baudRate ? (p.baudRate + ' · 8N1' + (p.state === 'open' && p.owner && p.owner.id !== sessionId ? ' · 被占用（只读）' : '')) : (p.state === 'open' ? '已连接' : '可用')))))),
           h('div', { className: 'sst-sec' }, h('h4', null, '本次录制'),
             activeMeta
               ? h('div', { className: 'sst-rec on' },
@@ -776,7 +826,10 @@ window.__ModuleLoader__.load({
             tab === 'log' ? h('button', { className: 'sst-chip' + (filter === 'all' ? ' on' : ''), onClick: () => setFilter('all') }, '全部') : null,
             tab === 'log' ? h('button', { className: 'sst-chip' + (filter === 'rx' ? ' on' : ''), onClick: () => setFilter('rx') }, 'RX') : null,
             tab === 'log' ? h('button', { className: 'sst-chip' + (filter === 'tx' ? ' on' : ''), onClick: () => setFilter('tx') }, 'TX') : null,
-            h('button', { className: 'sst-btn', onClick: close, disabled: !active }, active ? '关闭串口' : '未连接')),
+            readOnly ? h('span', { className: 'sst-chip on', title: '端口由 ' + ((activeMeta.owner && activeMeta.owner.id) || '他人') + ' 持有' },
+              takenOver ? '已被接管 · 只读' : '只读 · 由 Agent 持有') : null,
+            readOnly ? h('button', { className: 'sst-btn', onClick: takeOver }, '接管写入') : null,
+            h('button', { className: 'sst-btn', onClick: close, disabled: !active || readOnly }, readOnly ? '只读中' : (active ? '关闭串口' : '未连接'))),
 
           tab === 'log'
             ? h('div', {
@@ -830,13 +883,15 @@ window.__ModuleLoader__.load({
             ? h('div', { className: 'sst-send' },
                 h('input', {
                   value: draft,
-                  placeholder: mode === 'history' ? '历史录制（只读），先返回实时' : active ? '输入要发送的内容，回车发送' : '先打开一个端口',
-                  disabled: !active || mode === 'history',
+                  placeholder: mode === 'history' ? '历史录制（只读），先返回实时'
+                    : readOnly ? '只读 · 由 ' + ((activeMeta.owner && activeMeta.owner.id) || '他人') + ' 持有，接管后才能发送'
+                    : active ? '输入要发送的内容，回车发送' : '先打开一个端口',
+                  disabled: !active || mode === 'history' || readOnly,
                   onChange: (e) => setDraft(e.target.value),
                   onKeyDown: (e) => { if (e.key === 'Enter') send() },
                 }),
                 h('select', { defaultValue: 'crlf' }, h('option', { value: 'crlf' }, 'CRLF'), h('option', { value: 'lf' }, 'LF'), h('option', { value: 'none' }, '无')),
-                h('button', { className: 'sst-btn primary', onClick: send, disabled: !active }, '发送'))
+                h('button', { className: 'sst-btn primary', onClick: send, disabled: !active || readOnly }, '发送'))
             : null,
 
           h('div', { className: 'sst-status' },
@@ -845,7 +900,7 @@ window.__ModuleLoader__.load({
             h('span', null, 'TX ', h('b', null, fmtBytes(totals.tx))),
             h('span', null, '行 ', h('b', null, String(lines.length))),
             h('span', null, '断行 ', h('b', null, lineEnding)),
-            h('span', null, mode === 'history' ? '历史（只读）' : '实时'),
+            h('span', null, mode === 'history' ? '历史（只读）' : readOnly ? '只读（他人持有）' : '实时'),
             h('span', null, '身份 ' + sessionId.slice(0, 12)),
             h('span', null, view === 'hex' ? 'Hex 视图' : '文本视图')), menuNode, capMenuNode, exportNode, toastNode))
     }
