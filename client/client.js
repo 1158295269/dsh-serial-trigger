@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
     const MAX_LINES = 20000
     const SAMPLES = 120
 
-    const CSS = ".sst-root{display:grid;grid-template-columns:236px 1fr;height:100%;gap:10px;padding:12px;box-sizing:border-box;font:13px/1.45 -apple-system,\"Segoe UI\",\"Microsoft YaHei\",system-ui,sans-serif;color:#1f2328}\n.sst-side{background:#fff;border:1px solid #e4e5e9;border-radius:12px;padding:13px;display:flex;flex-direction:column;gap:14px;overflow:auto}\n.sst-sec h4{margin:0 0 7px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#8b929c;font-weight:600}\n.sst-port{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;cursor:pointer}\n.sst-port:hover{background:#f7f8fa}.sst-port.on{background:#f2f5f9}\n.sst-name{font-weight:600;font-size:12.5px}.sst-meta{color:#98a0ab;font-size:11px;margin-top:1px}\n.sst-dot{width:7px;height:7px;border-radius:50%;flex:none;background:#ccd1d8}\n.sst-dot.on{background:#2f9e75;box-shadow:0 0 0 3px rgba(47,158,117,.15)}\n.sst-rec{padding:7px 8px;border-radius:9px;cursor:pointer}.sst-rec:hover{background:#f7f8fa}.sst-rec.on{background:#f2f5f9}\n.sst-rec .a{font-size:12.5px}.sst-rec .b{font-size:11px;color:#98a0ab;margin-top:2px;display:flex;gap:8px}\n.sst-main{background:#fff;border:1px solid #e4e5e9;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;min-width:0}\n.sst-head{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid #eef0f2;flex-wrap:wrap}\n.sst-tabs{display:flex;background:#f1f2f4;border-radius:8px;padding:2px}\n.sst-tabs button{border:0;background:transparent;padding:3px 11px;border-radius:6px;color:#5b616e;font-size:12px;cursor:pointer}\n.sst-tabs button.on{background:#fff;color:#1f2328;box-shadow:0 1px 2px rgba(0,0,0,.05)}\n.sst-grow{flex:1}\n.sst-chip{border:1px solid #e2e3e6;background:#fff;color:#5b616e;border-radius:999px;padding:2px 9px;font-size:11.5px;cursor:pointer}\n.sst-chip.on{background:#1f2328;color:#fff;border-color:#1f2328}\n.sst-btn{border:1px solid #d9dbe0;background:#fff;border-radius:7px;padding:4px 11px;color:#2b313a;font-size:12px;cursor:pointer}\n.sst-btn.primary{background:#1f2328;color:#fff;border-color:#1f2328}\n.sst-log{flex:1;overflow:auto;padding:6px 0;font-family:\"Cascadia Mono\",Consolas,monospace;font-size:12px;position:relative}\n.sst-line{display:grid;grid-template-columns:96px 16px 1fr;gap:7px;padding:0 16px;line-height:19px;white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere}\n.sst-line:hover{background:#fafbfc}.sst-t{color:#a8aeb7}.sst-d{color:#c6ccd4}\n.sst-tx{color:#2563eb}.sst-err{color:#cf5656}.sst-errline{background:rgba(207,86,86,.07)}\n.sst-pending{opacity:.55;font-style:italic}\n.sst-spacer{position:relative}\n.sst-slice{position:absolute;left:0;right:0}\n.sst-hexline{display:grid;grid-template-columns:96px 72px 1fr;gap:8px;padding:0 16px;height:19px;line-height:19px;white-space:pre}\n.sst-off{color:#b3b9c2}.sst-bytes{color:#3d444d}\n.sst-send{display:flex;gap:8px;padding:9px 13px;border-top:1px solid #eef0f2;align-items:center}\n.sst-send input{flex:1;font:inherit;border:1px solid #dcdee3;border-radius:8px;padding:6px 10px}\n.sst-send select,.sst-head select{font:inherit;border:1px solid #dcdee3;border-radius:8px;padding:4px 7px;background:#fff;font-size:12px}\n.sst-status{display:flex;gap:16px;padding:5px 14px;border-top:1px solid #f1f2f4;color:#7b8390;font-size:11px;background:#fbfbfc}\n.sst-status b{color:#414852}\n.sst-empty{padding:40px 20px;color:#98a0ab;text-align:center;font-size:12px}\n.sst-stats{padding:18px 20px;overflow:auto}\n.sst-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}\n.sst-card{border:1px solid #eceef1;border-radius:11px;padding:13px 15px}\n.sst-card .k{color:#8b929c;font-size:11px}.sst-card .v{font-size:21px;font-weight:600;margin-top:5px}\n.sst-card .s{color:#98a0ab;font-size:11px;margin-top:3px}\n.sst-chart{margin-top:16px;border:1px solid #eceef1;border-radius:11px;padding:13px 15px 6px}\n.sst-chart h5{margin:0 0 2px;font-size:12px;color:#4b525c}.sst-chart .sub{color:#98a0ab;font-size:11px}"
+    const CSS = ".sst-root{display:grid;grid-template-columns:236px 1fr;height:100%;min-height:0;overflow:hidden;gap:10px;padding:12px;box-sizing:border-box;font:13px/1.45 -apple-system,\"Segoe UI\",\"Microsoft YaHei\",system-ui,sans-serif;color:#1f2328}\n.sst-side{background:#fff;border:1px solid #e4e5e9;border-radius:12px;padding:13px;display:flex;flex-direction:column;gap:14px;overflow:auto}\n.sst-sec h4{margin:0 0 7px;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:#8b929c;font-weight:600}\n.sst-port{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:9px;cursor:pointer}\n.sst-port:hover{background:#f7f8fa}.sst-port.on{background:#f2f5f9}\n.sst-name{font-weight:600;font-size:12.5px}.sst-meta{color:#98a0ab;font-size:11px;margin-top:1px}\n.sst-dot{width:7px;height:7px;border-radius:50%;flex:none;background:#ccd1d8}\n.sst-dot.on{background:#2f9e75;box-shadow:0 0 0 3px rgba(47,158,117,.15)}\n.sst-rec{padding:7px 8px;border-radius:9px;cursor:pointer}.sst-rec:hover{background:#f7f8fa}.sst-rec.on{background:#f2f5f9}\n.sst-rec .a{font-size:12.5px}.sst-rec .b{font-size:11px;color:#98a0ab;margin-top:2px;display:flex;gap:8px}\n.sst-main{background:#fff;border:1px solid #e4e5e9;border-radius:12px;display:flex;flex-direction:column;overflow:hidden;min-width:0}\n.sst-head{display:flex;align-items:center;gap:8px;padding:9px 14px;border-bottom:1px solid #eef0f2;flex-wrap:wrap}\n.sst-tabs{display:flex;background:#f1f2f4;border-radius:8px;padding:2px}\n.sst-tabs button{border:0;background:transparent;padding:3px 11px;border-radius:6px;color:#5b616e;font-size:12px;cursor:pointer}\n.sst-tabs button.on{background:#fff;color:#1f2328;box-shadow:0 1px 2px rgba(0,0,0,.05)}\n.sst-grow{flex:1}\n.sst-chip{border:1px solid #e2e3e6;background:#fff;color:#5b616e;border-radius:999px;padding:2px 9px;font-size:11.5px;cursor:pointer}\n.sst-chip.on{background:#1f2328;color:#fff;border-color:#1f2328}\n.sst-btn{border:1px solid #d9dbe0;background:#fff;border-radius:7px;padding:4px 11px;color:#2b313a;font-size:12px;cursor:pointer}\n.sst-btn.primary{background:#1f2328;color:#fff;border-color:#1f2328}\n.sst-log{flex:1;overflow:auto;padding:6px 0;font-family:\"Cascadia Mono\",Consolas,monospace;font-size:12px;position:relative}\n.sst-line{display:grid;grid-template-columns:96px 16px 1fr;gap:7px;padding:0 16px;line-height:19px;white-space:pre-wrap;word-break:break-all;overflow-wrap:anywhere}\n.sst-line:hover{background:#fafbfc}.sst-t{color:#a8aeb7}.sst-d{color:#c6ccd4}\n.sst-tx{color:#2563eb}.sst-err{color:#cf5656}.sst-errline{background:rgba(207,86,86,.07)}\n.sst-pending{opacity:.55;font-style:italic}\n.sst-spacer{position:relative}\n.sst-slice{position:absolute;left:0;right:0}\n.sst-hexline{display:grid;grid-template-columns:96px 72px 1fr;gap:8px;padding:0 16px;height:19px;line-height:19px;white-space:pre}\n.sst-off{color:#b3b9c2}.sst-bytes{color:#3d444d}\n.sst-send{display:flex;gap:8px;padding:9px 13px;border-top:1px solid #eef0f2;align-items:center}\n.sst-send input{flex:1;font:inherit;border:1px solid #dcdee3;border-radius:8px;padding:6px 10px}\n.sst-send select,.sst-head select{font:inherit;border:1px solid #dcdee3;border-radius:8px;padding:4px 7px;background:#fff;font-size:12px}\n.sst-status{display:flex;gap:16px;padding:5px 14px;border-top:1px solid #f1f2f4;color:#7b8390;font-size:11px;background:#fbfbfc}\n.sst-status b{color:#414852}\n.sst-empty{padding:40px 20px;color:#98a0ab;text-align:center;font-size:12px}\n.sst-stats{padding:18px 20px;overflow:auto}\n.sst-cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}\n.sst-card{border:1px solid #eceef1;border-radius:11px;padding:13px 15px}\n.sst-card .k{color:#8b929c;font-size:11px}.sst-card .v{font-size:21px;font-weight:600;margin-top:5px}\n.sst-card .s{color:#98a0ab;font-size:11px;margin-top:3px}\n.sst-chart{margin-top:16px;border:1px solid #eceef1;border-radius:11px;padding:13px 15px 6px}\n.sst-chart h5{margin:0 0 2px;font-size:12px;color:#4b525c}.sst-chart .sub{color:#98a0ab;font-size:11px}"
 
     const CSS_EXTRA = [
       '.sst-menu{position:fixed;z-index:60;min-width:184px;background:#fff;border:1px solid #e2e4e8;border-radius:9px;padding:4px;box-shadow:0 10px 26px rgba(20,24,30,.14)}',
@@ -151,7 +151,12 @@ window.__ModuleLoader__.load({
     }
 
     function Panel(props) {
-      const sessionId = (props && props.sessionId) || ''
+      const injected = (props && props.sessionId) || ''
+      // A view may not receive a session id; fall back to a per-instance id so two
+      // panels never share ownership by accident.
+      const selfId = React.useRef('panel-' + Math.random().toString(36).slice(2, 8))
+      const sessionId = injected || selfId.current
+      const rootRef = React.useRef(null)
       const [state, setState] = React.useState({ ports: [], captures: [] })
       const [active, setActive] = React.useState(null)
       const [lines, setLines] = React.useState([])
@@ -190,6 +195,20 @@ window.__ModuleLoader__.load({
       const lastSample = React.useRef(null)
 
       React.useEffect(() => { ensureStyles() }, [])
+
+      React.useLayoutEffect(() => {
+        const el = rootRef.current
+        const host = el && el.parentElement
+        if (!host || typeof ResizeObserver === 'undefined') return
+        const fit = () => {
+          const h = host.clientHeight
+          if (h > 0) el.style.height = h + 'px'
+        }
+        fit()
+        const ro = new ResizeObserver(fit)
+        ro.observe(host)
+        return () => ro.disconnect()
+      }, [])
 
       React.useEffect(() => {
         const el = logRef.current
@@ -586,7 +605,7 @@ window.__ModuleLoader__.load({
         : null
       const toastNode = toast ? h('div', { className: 'sst-toast' }, toast) : null
 
-      return h('div', { className: 'sst-root' },
+      return h('div', { className: 'sst-root', ref: rootRef },
         h('aside', { className: 'sst-side' },
           h('div', { className: 'sst-sec' }, h('h4', null, '端口'),
             (state.ports.length ? state.ports : [{ port: '（未发现端口）', state: 'none' }]).map((p, i) =>
@@ -736,6 +755,7 @@ window.__ModuleLoader__.load({
             h('span', null, '行 ', h('b', null, String(lines.length))),
             h('span', null, '断行 ', h('b', null, lineEnding)),
             h('span', null, mode === 'history' ? '历史（只读）' : '实时'),
+            h('span', null, '身份 ' + sessionId.slice(0, 12)),
             h('span', null, view === 'hex' ? 'Hex 视图' : '文本视图')), menuNode, capMenuNode, exportNode, toastNode))
     }
 
@@ -752,6 +772,7 @@ window.__ModuleLoader__.load({
             name: 'conversation.view',
             id: 'serial-trigger',
             order: 20,
+            scope: 'session',
             label: () => '串口',
             inject: (sessionId) => ({ sessionId }),
           }, Panel),
