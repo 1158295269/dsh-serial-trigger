@@ -173,6 +173,7 @@ window.__ModuleLoader__.load({
       const [mode, setMode] = React.useState('live')
       const [historyMeta, setHistoryMeta] = React.useState(null)
       const [marks, setMarks] = React.useState([])
+      const [sources, setSources] = React.useState([])
       const [onlyMarks, setOnlyMarks] = React.useState(false)
       const [rescanning, setRescanning] = React.useState(false)
       const [capMenu, setCapMenu] = React.useState(null)
@@ -368,13 +369,22 @@ window.__ModuleLoader__.load({
 
       const rescan = async () => {
         if (!historyMeta) return
+        const scripts = sources.filter((s) => s.script)
+        if (scripts.length === 0) {
+          setToast('还没有扫描过：让 Agent 用 serial_scan 扫一次，脚本会留在工作区')
+          return
+        }
         setRescanning(true)
         try {
-          const res = await api('POST', '/rules/apply', { captureId: historyMeta.id })
-          const summary = (res.results || []).map((r) => r.rule + ':' + r.marks).join('  ')
+          const done = []
+          for (const s of scripts) {
+            const r = await api('POST', '/scan', { captureId: historyMeta.id, script: s.script, label: s.label })
+            done.push((r.label || s.label) + ':' + r.marks)
+          }
           const m = await api('GET', '/marks?captureId=' + encodeURIComponent(historyMeta.id))
           setMarks(m.marks || [])
-          setToast('重扫完成 ' + summary)
+          setSources(m.sources || [])
+          setToast('重扫完成 ' + done.join('  '))
         } catch (e) { setToast(String(e.message || e)) }
         setRescanning(false)
       }
@@ -424,7 +434,8 @@ window.__ModuleLoader__.load({
           try {
             const m = await api('GET', '/marks?captureId=' + encodeURIComponent(cap.id))
             setMarks(m.marks || [])
-          } catch (e) { setMarks([]) }
+            setSources(m.sources || [])
+          } catch (e) { setMarks([]); setSources([]) }
           setToast('已打开录制（只读）')
         } catch (e) { setToast(String(e.message || e)) }
       }
