@@ -21,65 +21,27 @@ node bin/rules-check.mjs COM8        # 扫描脚本、越界守卫、死循环�
 
 固件只需要持续吐字节，不校验协议。**没有硬件时跳过，并在提交信息里注明"未验真机"。**
 
-## 第 3 层：界面自动化（新增，重点）
+## 第 3 层：界面验收（原生检查，不是 CI）
 
-现在所有界面问题都是靠你截图发现的：面板撑破容器、标签没出现、所有权没生效。这些都能脚本化。
+历史教训：面板的问题几乎都出在"和宿主容器的关系"上（撑破容器、标签没出现、所有权没生效），
+脱离真实宿主测不出来。但 DSH 的第三方客户端包只在**桌面端启动时**组装进 `__DSH_BOOT__`，
+`dsh web` 配置档里根本没有这个面板——所以这一层**没有能在 CI 里跑的形态**。
 
-### 方案：CDP 驱动真实浏览器
+现状：
 
-```
-test/ui/
-  run.mjs            启动隔离实例 + 无头 Chrome，跑场景
-  page.mjs           CDP 封装：click / text / eval / screenshot / waitFor
-  scenarios/
-    view-tab.mjs     标签出现、切换后会话不丢
-    layout.mjs       面板高度 == 容器高度（防止再次撑破）
-    ownership.mjs    会话 A 开端口，会话 B 看到"被占用"、发送被拒
-    readonly.mjs     点他人端口进入只读；被 Agent 接管后跟随并保持只读
-    lifecycle.mjs    归档会话 A 后端口释放
-    history.mjs      打开录制 → 故障点 → 导出
-```
+- `test/ui/run.mjs` + `page.mjs`：CDP 驱动真实 Chrome 的 8 个场景（S1–S8：标签、布局、
+  身份、端口列表、所有权、身份跟随、占用标签、输入框隐藏）。只能在**桌面实例**上跑，
+  需要一次性 token：
+  `node test/ui/run.mjs --base <url> --token <token> [--only layout]`
+  它是"验收脚本"，不是门禁——需要人工贴 token 的测试不能当回归门禁。
+- 真正的界面回归：改完面板后，由 agent 用原生工具（Windows-MCP：`Snapshot` 读控件树、
+  `Click` 点控件或坐标、`Screenshot` 留证）在真窗口上走一遍关键路径，截图存
+  `test/ui/out/`。
 
-每个场景是一个函数，失败时输出：截图 + DOM 片段 + 当前 /serial/state。
-
-### 关键断言示例
-
-```js
-// layout.mjs —— 这条能直接抓住刚才那个"撑破容器"的 bug
-const { root, host } = await page.eval(() => ({
-  root: document.querySelector('.sst-root').getBoundingClientRect().height,
-  host: document.querySelector('.sst-root').parentElement.clientHeight,
-}))
-assert.ok(Math.abs(root - host) <= 2, `面板高 ${root} vs 容器 ${host}`)
-
-// ownership.mjs
-await page.click('.sst-port:has-text("COM8")')       // 会话 A 打开
-await page.switchSession('session-b')
-assert.match(await page.text('.sst-port'), /被占用/)
-assert.equal(await page.isDisabled('.sst-send'), true)
-```
-
-### 会话切换怎么自动化
-
-两个办法，从简到繁：
-
-1. **两个浏览器标签页**，各自绑定不同会话（最贴近真实）
-2. 用宿主 HTTP 接口创建会话，再用 URL 打开（需要确认 DSH 有没有创建会话的公开接口）
-
-先做办法 1：同一个实例开两个标签页，各点不同会话。
-
-### 视觉回归
-
-关键界面存基线截图，用像素差 > 2% 判定失败：
-
-```
-test/ui/baseline/view-tab.png
-test/ui/baseline/panel.png
-test/ui/baseline/hex.png
-test/ui/baseline/stats.png
-```
-
-不追求逐像素一致（字体渲染有差异），只看布局是否明显变化。
+已删除（2026-11-22）：S9（只读）/ S10（被接管跟随）。这两条依赖 `dsh web` 隔离实例，
+而那套实例不加载第三方客户端包，脚本从未跑绿过，留着只会让人误以为这块有保障。
+这两个行为改由上面的原生检查覆盖：实测已验到只读 chip、`接管写入`、关闭按钮 `只读中`、
+接管后跟随到新端口。
 
 ## 第 4 层：长时间稳定性（每周或大改后）
 
@@ -98,16 +60,10 @@ node bench/lag.mjs 200       # 200MB 录制，量各操作的事件循环卡顿
 |---|---|---|---|
 | 1 单元 | 每次保存/提交 | 20s | 不允许提交 |
 | 2 真机 | 合并前（有硬件） | 30s | 不允许合并 |
-| 3 界面 | 改前端或宿主交互后 | 2–3 分钟 | 阻塞合并 |
+| 3 界面 | 改前端或宿主交互后 | 1–2 分钟 | 阻塞合并（原生检查 + 截图留证） |
 | 4 稳定性 | 每周 | 30 分钟 | 记录，不阻塞 |
-
-## 现在要补的三件事
-
-1. `test/ui/` 骨架 + `layout` 与 `view-tab` 两个场景（能立刻防住已发生的两类回归）
-2. `ownership` 场景：双标签页 + 两个会话
-3. `npm scripts`：`test`、`test:ui`、`test:hw`，让三条命令记得住
 
 ## 不做什么
 
 - 不做 mock DOM 的组件测试：面板的问题几乎都出在"和宿主容器的关系"上，脱离真实宿主测不出来
-- 不追求 100% 覆盖率：当前 116 项测试已经覆盖了容易出错的状态机与边界
+- 不追求 100% 覆盖率：当前 138 项测试已经覆盖了容易出错的状态机与边界
