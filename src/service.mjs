@@ -158,7 +158,7 @@ export class SerialService {
 
     const cap = opts.record === false
       ? { captureId: null, path: null, writer: null }
-      : await this.store.openCapture({ project, conversation, sessionId, port, baud: baudRate });
+      : await this.store.openCapture({ project, conversation, sessionId, port, baud: baudRate, origin: owner.kind === 'agent' ? 'agent' : 'human' });
     const portId = nextPortId++;
     const rec = {
       id: portId, name: port, baud: baudRate, state: 'open',
@@ -657,7 +657,7 @@ export class SerialService {
       try {
         while (run.alive) {
           const msg = await sub.next(250);
-          if (!msg) { this._fsmTick(run); continue; }
+          if (!msg) { await this._fsmTick(run); continue; }
           for (const line of assembler.feed(msg)) {
             run.machine.feedLine(line.text, Date.now());
             await this._fsmApply(run);
@@ -669,19 +669,27 @@ export class SerialService {
   }
 
   async _fsmApply(run) {
+    let stop = false;
     for (const action of run.machine.drainActions()) {
       if (action.type === 'send') {
         await this.send(run.portId, Buffer.from(action.text, 'utf8'), { owner: run.owner, force: true }).catch(() => {});
       } else if (action.type === 'mark') {
         run.marks.push({ at: action.at, label: action.label, severity: action.severity });
+      } else if (action.type === 'stop') {
+        stop = true;
       }
     }
     this._fsmNotify(run);
+    // The scenario can decide that an unanswered expectation ends the run; the
+    // marks it produced are persisted by fsmStop.
+    if (stop || run.machine.stopped) await this.fsmStop(run.id).catch(() => {});
   }
 
-  _fsmTick(run) {
+  async _fsmTick(run) {
     const t = run.machine.tick(Date.now());
-    if (t.length) this._fsmApply(run);
+    // Always drain: a timeout retry or stop queues actions without a transition.
+    await this._fsmApply(run);
+    return t;
   }
 
   _fsmNotify(run) {

@@ -205,6 +205,19 @@ v0.1 的模糊查询用 `digest LIKE '%kw%'`；量大了再上 FTS5（编译选�
 - 清理由对话发起：`serial_cleanup({project?, before?, dryRun:true})` → 返回"将删除 N 个文件 / X GB / 时间范围" → 用户确认后 `serial_cleanup({planId})` 执行。
 - **安全约束**：不动当前会话正在录的 capture；有打开句柄的跳过；只移不删（进 `.trash/`，再按 `.trash` 自己的保留策略下沉）。
 
+### 11.1 谁录的谁来清（v0.3.3）
+
+录制在打开时记下 `origin`：
+
+| 打开方式 | origin | 能否被 `serial_cleanup` 删 |
+|---|---|---|
+| 工具（模型） | `agent` | 能，默认就在清理范围里 |
+| 面板（人） | `human` | **不能**，除非显式传 `includeHuman:true` |
+
+`planCleanup` 默认只看 `origin=agent`，并在返回里给出 `skippedHuman`，
+让调用者知道有多少条人的录制被跳过。旧索引通过 `ALTER TABLE ADD COLUMN ... DEFAULT 'human'`
+迁移，历史录制一律按人的录制保护起来。
+
 ---
 
 ## 12. 端口状态机
@@ -508,6 +521,28 @@ Agent 下次读 `serial_marks` 就能看到“卡在哪一步、当时的字节�
 
 ---
 
+
+### 22.6 超时与失败降级（v0.3.3）
+
+等回执的转换（`send` + `expect` + `waitMs`）可以声明 `onTimeout`，策略由场景决定而不是写死：
+
+```json
+{
+  "send": "PING",
+  "expect": "line:/PONG/",
+  "waitMs": 800,
+  "goto": "ready",
+  "onTimeout": { "retry": 2, "retryDelayMs": 100, "goto": "recovering", "mark": "设备没回 PONG", "severity": "warn", "stop": false }
+}
+```
+
+- `retry`：超时后先原样重发，最多 N 次（0..10），每次重新计 `waitMs`，trace 里记 `retry`；
+- 重发用尽后才降级：`mark`/`severity`（默认 `error` + 固定文案）、`goto`（跳恢复态）、
+  `else`（老字段，等价于 goto）、`stop:true`（直接停机，状态变 stopped，marks 由 fsmStop 落盘）；
+- 不写 `onTimeout` 时行为不变：打 error 标记，有 `else` 就跳过去；
+- 超时策略对离线 `simulate` 同样生效，可以先用录制验证。
+
+---
 ## 23. 会话视图与端口所有权（v0.2.1）
 
 ### 23.1 面板挂在会话内

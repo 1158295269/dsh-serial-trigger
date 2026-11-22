@@ -56,6 +56,16 @@ export function validateScenario(def) {
         compileMatcher(action.expect);
         if (!Number.isFinite(Number(action.waitMs)) || Number(action.waitMs) <= 0) throw bad('transition "' + key + '" in "' + name + '" must declare waitMs');
         if (!action.goto) throw bad('transition "' + key + '" in "' + name + '" must declare the state reached after the expected answer');
+        // 超时策略是场景自己决定的，不写死：可以只打标、跳恢复态、重发若干次，或直接停机。
+        if (action.onTimeout !== undefined) {
+          const t = action.onTimeout || {};
+          if (typeof t !== 'object') throw bad('transition "' + key + '" in "' + name + '" onTimeout must be an object');
+          if (t.goto !== undefined && !names.includes(t.goto)) throw bad('transition "' + key + '" in "' + name + '" onTimeout.goto "' + t.goto + '" is not a state');
+          if (t.retry !== undefined && (!Number.isInteger(Number(t.retry)) || Number(t.retry) < 0 || Number(t.retry) > 10)) throw bad('transition "' + key + '" in "' + name + '" onTimeout.retry must be an integer 0..10');
+          if (t.retryDelayMs !== undefined && (!Number.isFinite(Number(t.retryDelayMs)) || Number(t.retryDelayMs) < 0)) throw bad('transition "' + key + '" in "' + name + '" onTimeout.retryDelayMs must be >= 0');
+          if (t.severity !== undefined && !['info', 'warn', 'error'].includes(t.severity)) throw bad('transition "' + key + '" in "' + name + '" onTimeout.severity must be info|warn|error');
+          if (t.stop !== undefined && typeof t.stop !== 'boolean') throw bad('transition "' + key + '" in "' + name + '" onTimeout.stop must be a boolean');
+        }
       }
       if (match.kind === 'line' && match.re) { /* compiled above */ }
     }
@@ -75,7 +85,8 @@ export class Machine {
     this.name = def.name || 'scenario';
     this.state = def.initial;
     this.enteredAt = 0;
-    this.pending = null;      // { re, deadline, goto, elseTo, mark, severity }
+    this.pending = null;      // { match, deadline, goto, elseTo, sendText, waitMs, attempt, maxAttempts, onTimeout }
+    this.stopped = false;
     this.trace = [];
     this.actions = [];        // side effects the runtime must perform
     this._armAfter(0);
@@ -111,12 +122,19 @@ export class Machine {
       this.actions.push({ type: 'send', text: action.send, at: now });
       this._send = action.send;
       const m = action.expect ? compileMatcher(action.expect) : null;
+      const onTimeout = action.onTimeout || null;
+      const retries = onTimeout && Number.isInteger(Number(onTimeout.retry)) ? Number(onTimeout.retry) : 0;
       this.pending = {
         match: m,
         deadline: now + Number(action.waitMs || 2000),
         goto: action.goto,
         elseTo: action.else || null,
         note: action.mark || '',
+        sendText: action.send,
+        waitMs: Number(action.waitMs || 2000),
+        attempt: 0,
+        maxAttempts: retries,
+        onTimeout,
       };
       return out;
     }
@@ -159,10 +177,29 @@ export class Machine {
   tick(now = Date.now()) {
     const out = [];
     if (this.pending && now >= this.pending.deadline) {
-      const { elseTo } = this.pending;
-      this.actions.push({ type: 'mark', label: '等待确认超时（' + this.state + '）', severity: 'error', at: now });
+      const p = this.pending;
+      const cfg = p.onTimeout || {};
+      // Flexible timeout: resend first when the scenario asked for retries, then
+      // fall back to whatever the scenario declared (mark / goto / stop).
+      if (p.attempt < p.maxAttempts) {
+        p.attempt += 1;
+        p.deadline = now + p.waitMs + Number(cfg.retryDelayMs || 0);
+        this.actions.push({ type: 'send', text: p.sendText, at: now });
+        this.trace.push({ at: now, from: this.state, to: this.state, via: 'retry', note: '重发 ' + p.attempt + '/' + p.maxAttempts });
+        return out;
+      }
       this.pending = null;
-      if (elseTo) out.push(this._enter(elseTo, now, 'expect-timeout', 'timeout'));
+      const label = cfg.mark || ('等待确认超时（' + this.state + '）');
+      const severity = cfg.severity || (cfg.mark ? 'warn' : 'error');
+      this.actions.push({ type: 'mark', label, severity, at: now });
+      if (cfg.stop === true) {
+        this.stopped = true;
+        this.actions.push({ type: 'stop', at: now, reason: label });
+        this.trace.push({ at: now, from: this.state, to: this.state, via: 'expect-timeout', note: 'stop: ' + label });
+        return out;
+      }
+      const target = cfg.goto || p.elseTo;
+      if (target) out.push(this._enter(target, now, 'expect-timeout', label));
       return out;
     }
     const after = this._stateDef().after;
@@ -186,7 +223,10 @@ export class Machine {
       name: this.name,
       state: this.state,
       enteredAt: this.enteredAt,
-      waitingFor: this.pending ? { deadline: this.pending.deadline, goto: this.pending.goto } : null,
+      waitingFor: this.pending
+        ? { deadline: this.pending.deadline, goto: this.pending.goto, attempt: this.pending.attempt, retries: this.pending.maxAttempts }
+        : null,
+      stopped: this.stopped,
       events: Object.keys(on).filter((k) => k.startsWith('event:')).map((k) => k.slice(6)),
       lines: Object.keys(on).filter((k) => k.startsWith('line:')),
       trace: this.trace.slice(-20),

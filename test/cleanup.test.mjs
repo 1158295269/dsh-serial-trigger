@@ -66,3 +66,41 @@ test('CL4 deleting without a plan is refused', async (t) => {
   assert.equal(res.ok, false);
   assert.equal(res.error.code, 'E_INVALID_ARGS');
 });
+
+test('CL5 human recordings are never planned for deletion', async (t) => {
+  const h = await harness(t);
+  const mine = await makeCapture(h.service, 'MOCK:A1', 'agent\n');
+  // a recording the user started from the panel: owner kind 'session'
+  const human = await h.service.open({ port: 'MOCK:H1', project: 'clean', conversation: 'panel', owner: { kind: 'session', id: 'panel-s' } });
+  h.service.feed(human.portId, Buffer.from('human\n'));
+  await new Promise((r) => setTimeout(r, 30));
+  const humanClosed = await h.service.close(human.portId);
+
+  const plan = await h.byName.serial_cleanup.execute({ olderThanDays: 0, keepLast: 0 });
+  assert.equal(plan.ok, true);
+  assert.equal(plan.data.scope, 'agent');
+  assert.equal(plan.data.count, 1);
+  assert.equal(plan.data.skippedHuman, 1);
+  assert.equal(plan.data.items[0].captureId, mine.captureId);
+
+  const applied = await h.byName.serial_cleanup.execute({ planId: plan.data.planId });
+  assert.equal(applied.data.removed, 1);
+  assert.ok((await stat(humanClosed.path)).size > 0, 'the human recording must survive');
+  assert.equal(h.store.listCaptures({}).length, 1);
+});
+
+test('CL6 includeHuman is an explicit opt-in', async (t) => {
+  const h = await harness(t);
+  await makeCapture(h.service, 'MOCK:A2', 'agent\\n');
+  const human = await h.service.open({ port: 'MOCK:H2', project: 'clean', conversation: 'panel', owner: { kind: 'session', id: 'panel-s' } });
+  h.service.feed(human.portId, Buffer.from('human\\n'));
+  await new Promise((r) => setTimeout(r, 30));
+  await h.service.close(human.portId);
+
+  const plan = await h.byName.serial_cleanup.execute({ includeHuman: true });
+  assert.equal(plan.data.scope, 'all');
+  assert.equal(plan.data.count, 2);
+  const applied = await h.byName.serial_cleanup.execute({ planId: plan.data.planId });
+  assert.equal(applied.data.removed, 2);
+  assert.equal(h.store.listCaptures({}).length, 0);
+});

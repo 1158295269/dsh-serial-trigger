@@ -387,6 +387,7 @@ export function createTools(service) {
           olderThanDays: { type: 'number', description: '只清早于 N 天的录制，默认 0（不限）' },
           keepLast: { type: 'number', description: '保留最近的 N 条，其余可清，默认 0' },
           project: { type: 'string', description: '只清某个工程的录制' },
+          includeHuman: { type: 'boolean', description: '默认 false：只清 agent 自己录的；人类自己开的录制不动' },
           planId: { type: 'string', description: '上一次计划返回的 planId，传了就执行删除' },
         },
         additionalProperties: false,

@@ -65,6 +65,7 @@ const SCHEMA = [
   '  started_ms INTEGER, ended_ms INTEGER,',
   '  bytes_rx INTEGER, bytes_tx INTEGER, lines INTEGER, triggers INTEGER,',
   '  clean_close INTEGER, truncated INTEGER, missing INTEGER DEFAULT 0,',
+  "  origin TEXT NOT NULL DEFAULT 'human',",
   '  digest TEXT, tags TEXT',
   ');',
   'CREATE INDEX IF NOT EXISTS ix_project_time ON captures(project, started_ms);',
@@ -84,6 +85,10 @@ export class Store {
     await mkdir(ioPath(store.root), { recursive: true });
     store.db = new DatabaseSync(ioPath(store.dbPath));
     store.db.exec(SCHEMA);
+    // Older indexes predate the origin column; add it in place rather than
+    // rebuilding (a rebuild would drop the user's history).
+    const columns = store.db.prepare('PRAGMA table_info(captures)').all().map((c) => c.name);
+    if (!columns.includes('origin')) store.db.exec("ALTER TABLE captures ADD COLUMN origin TEXT NOT NULL DEFAULT 'human'");
     return store;
   }
 
@@ -112,6 +117,9 @@ export class Store {
 
   async openCapture(opts) {
     const { conversation, sessionId = '', port, baud } = opts;
+    // Who started the recording decides whether serial_cleanup may ever remove
+    // it: a human's own debugging sessions are not the agent's to delete.
+    const origin = opts.origin === 'agent' ? 'agent' : 'human';
     // A project name arrives from a tool argument: never let it walk out of the root.
     const project = sanitizeName(opts.project || 'default', 40);
     const dir = join(this.root, project);
@@ -135,9 +143,9 @@ export class Store {
     this.writers.set(id, { writer, path, project, conversation, sessionId, port, baud, started: now });
     this.db
       .prepare(
-        'INSERT OR REPLACE INTO captures (id, project, conversation, session_id, path, port, baud, started_ms, clean_close, missing) VALUES (?,?,?,?,?,?,?,?,?,0)'
+        'INSERT OR REPLACE INTO captures (id, project, conversation, session_id, path, port, baud, started_ms, clean_close, missing, origin) VALUES (?,?,?,?,?,?,?,?,?,0,?)'
       )
-      .run(id, project, conversation || '', sessionId, path, port || '', baud || 0, now, 0);
+      .run(id, project, conversation || '', sessionId, path, port || '', baud || 0, now, 0, origin);
 
     return { captureId: id, path, writer };
   }
@@ -186,7 +194,7 @@ export class Store {
     if (opts.keyword) { where.push('(digest LIKE ? OR conversation LIKE ? OR port LIKE ?)'); const k = '%' + opts.keyword + '%'; args.push(k, k, k); }
     if (!opts.includeMissing) where.push('missing = 0');
     const sql =
-      'SELECT id, project, conversation, port, baud, path, started_ms, ended_ms, bytes_rx, lines, truncated, missing, digest FROM captures' +
+      'SELECT id, project, conversation, port, baud, path, started_ms, ended_ms, bytes_rx, lines, truncated, missing, origin, digest FROM captures' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') +
       ' ORDER BY started_ms DESC LIMIT ' + (opts.limit || 20);
     return this.db.prepare(sql).all(...args);
@@ -320,8 +328,12 @@ export class Store {
    * Two-phase cleanup (SPEC §11): a dry run produces a plan, applying it deletes
    * exactly those captures. Deleting is irreversible, so the plan is explicit.
    */
-  async planCleanup({ olderThanDays = 0, keepLast = 0, project } = {}) {
-    const rows = this.listCaptures({ project, limit: 100000 });
+  async planCleanup({ olderThanDays = 0, keepLast = 0, project, includeHuman = false } = {}) {
+    const all = this.listCaptures({ project, limit: 100000 });
+    // Human recordings are the user's own evidence: the agent may plan its own
+    // captures away, never theirs. includeHuman is an explicit opt-in.
+    const rows = includeHuman ? all : all.filter((row) => (row.origin || 'human') === 'agent');
+    const skippedHuman = all.length - rows.length;
     // listCaptures returns SQL columns (started_ms / bytes_rx). Reading camelCase
     // here used to make olderThanDays match every row — a plan that deletes
     // everything instead of only the old captures.
@@ -338,6 +350,8 @@ export class Store {
       planId,
       dryRun: true,
       count: victims.length,
+      skippedHuman,
+      scope: includeHuman ? 'all' : 'agent',
       bytes: victims.reduce((n, v) => n + bytesOf(v), 0),
       items: victims.slice(0, 50).map((v) => ({ captureId: v.id, project: v.project, bytes: bytesOf(v), startedMs: startedOf(v) })),
       truncated: victims.length > 50,
