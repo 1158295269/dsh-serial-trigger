@@ -1,4 +1,4 @@
-# 交接：串口插件 v0.3.8
+# 交接：串口插件 v0.3.9
 
 仓库 `D:\文档\杂项\dsh-serial-trigger`，分支 `main`。
 先读 `SKILL.md`（模型怎么用）、`SPEC.md` §11.1（谁录的谁来清）、§22.6（超时与失败降级）、§23.5（单写者）。
@@ -58,6 +58,25 @@
     deadline 连续推进到窗口关闭 + F9 单测
   - 说明书补：脚本要写 ESM `export`、`persisted` 含义、省略 cursor 的实际回看范围、anchor length=0 语义、
     tailMs 内链式定时器、E_INTERNAL、场景文件路径按宿主 cwd 解析
+
+- v0.3.9（第四轮盲跑修复，SKILL 验收收官）：
+  - 盲跑第 4 遍（独立 subagent，只读 SKILL.md）：L1/L2/L3 全通过（44 次调用 / 10 分 44 秒），
+    且用上了前几轮修好的能力（scene {path}、单个 mark、E_BAD_SCENARIO、persisted）；只暴露说明书表述问题：
+  - **serial_bytes.truncated 语义反了**：实现是「读满请求长度」而非「到文件尾」；已改为后者（文件到尾返回短于 length 时为 true），
+    tools 描述与 O5 单测同步
+  - 说明书补：工具失败返回 {ok:false,error{...}} 外壳、status.events/lines 含义、simulate 无 status、mark.code 可选语义、
+    **line 转换每匹配一行触发一次（别把 send+expect 挂在重复行上）**、captures 的 truncated/missing 字段
+  - 四轮缺陷收敛：3 个接口缺陷（grep/simulate 报废、误删录制）→ 2 个（单 mark、simulate 时钟）→ 2 个（场景文件、链式定时器）→ 0 个代码缺陷
+
+## SKILL 验收协议（以后改 SKILL 就照这个跑）
+
+1. 起一个独立 subagent（新上下文），只给它：`读 SKILL.md` + COM8 可用 + 三档任务；
+   **禁止**读 SPEC/src/test/git 历史，卡住只能记缺陷、不许猜源码；
+2. 三档任务：L1 抓包（open+tail×2+captures+grep）→ L2 扫描脚本（写脚本→scan→marks→bytes 验引用）
+   → L3 FSM（simulate→live→event→wait→status→stop，且必须故意造一次错并自愈）；
+3. 判定：L1/L2/L3 全过 + 结束无 open 端口 + 交付「SKILL 缺陷清单」；有缺陷按「代码 bug / 文档没说 / 环境」归类；
+4. 稳定性：同一提示词连跑 2–3 次（真机单写者，必须串行），看调用次数与缺陷数是否收敛；
+5. 只改可归因到 SKILL 的句子；代码 bug 单独修并加回归测试，**不要用说明书去掩盖 bug**。
 
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24
