@@ -48,10 +48,25 @@ for ($i = 1; $i -le 6; $i++) {
 if (-not $up) {
   Say 'relaunch did not come up; trying once more'
   Start-Process -FilePath $exe
-  Start-Sleep -Seconds 10
+  Start-Sleep -Seconds 12
+  $again = @(Get-CimInstance Win32_Process -Filter "Name='DSH NEXT.exe'" |
+    Where-Object { $_.CommandLine -notmatch '--type=' })
+  if ($again.Count -gt 0) { Say ('second attempt is up: ' + $again[0].ProcessId); $up = $true }
 }
 
 $webLine = Get-Content -LiteralPath (Join-Path $env:USERPROFILE '.dsh\logs\desktop-next.log') -Tail 200 -ErrorAction SilentlyContinue |
   Select-String -Pattern 'dsh web: http' | Select-Object -Last 1
 if ($webLine) { Say ('last web url line: ' + $webLine.Line) } else { Say 'no web url line found in the log' }
+# 一次性任务清理：本脚本可能由 schtasks 拉起，跑完就把任务删掉
+try { & schtasks.exe /delete /tn 'dsh-restart-once' /f | Out-Null } catch {}
+
+if (-not $up) {
+  $note = Join-Path $env:TEMP 'DSH-RESTART-FAILED.txt'
+  @(
+    'DSH did not come back after the automatic restart.',
+    'Double-click: D:\software\dsh\DSH NEXT\DSH NEXT.exe',
+    'Log: ' + $log
+  ) | Set-Content -LiteralPath $note -Encoding UTF8
+  Say ('wrote failure note: ' + $note)
+}
 Say 'done'
