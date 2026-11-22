@@ -1,11 +1,11 @@
-# 交接：串口插件 v0.3.7
+# 交接：串口插件 v0.3.8
 
 仓库 `D:\文档\杂项\dsh-serial-trigger`，分支 `main`。
 先读 `SKILL.md`（模型怎么用）、`SPEC.md` §11.1（谁录的谁来清）、§22.6（超时与失败降级）、§23.5（单写者）。
 
 ## 现在到哪了
 
-- 单测 **165 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
+- 单测 **167 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
 - 真机冒烟通过（2026-11-22，COM8，板子空闲）：`bin/shell-check.mjs` 7/7（字节透明 sha256 一致、
   seq 无洞、句柄 2→2、索引 11 行）、`bin/rules-check.mjs` 12/12（扫描/标记/字节引用/越界与超时守卫）
 - 工具 **18 个**（含 `serial_cleanup`）
@@ -49,6 +49,15 @@
     tailMs 语义、scan 返回 marks 是数量、bytes 越过文件尾会截断
   - 错误 hint 改进：E_NO_SUCH_SCRIPT / E_SCRIPT_OUTSIDE_WORKSPACE / E_SCENARIO_OUTSIDE_WORKSPACE
     现在直接给出允许根目录（不再提不存在的 serial_config）
+
+- v0.3.8（第三轮盲跑修复）：
+  - 盲跑第 3 遍（独立 subagent，只读 SKILL.md）：L1/L2/L3 全通过（约 40 次工具调用 / 9 分钟），
+    比第 2 遍（98 次 / 15 分钟）明显收敛；暴露 2 个代码缺陷、若干说明书细节：
+  - **`scenario: {path}` 直接 E_INTERNAL: stat is not defined**：loadScenario 用了 readFile/stat 但没 import；已修 + R8 单测
+  - **simulate 尾部只推进一跳**：链式 after（A→B→C 各 1s）在 tailMs 窗口里只触发第一跳；已改为按定时器
+    deadline 连续推进到窗口关闭 + F9 单测
+  - 说明书补：脚本要写 ESM `export`、`persisted` 含义、省略 cursor 的实际回看范围、anchor length=0 语义、
+    tailMs 内链式定时器、E_INTERNAL、场景文件路径按宿主 cwd 解析
 
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24

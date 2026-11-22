@@ -3,7 +3,7 @@ name: dsh-serial-trigger
 description: 抓串口、留证据、按工作区脚本打故障点、用状态机替模型做实时收发。当需要打开/录制串口、回查某次调试、定位可疑字节、或让一个脚本顶住实时性时使用。
 ---
 
-# 串口助手（v0.3.7，18 个工具）
+# 串口助手（v0.3.8，18 个工具）
 
 ## 什么时候用
 
@@ -31,7 +31,7 @@ serial_close {portId}                                   → {path, bytesRx, byte
 ```
 
 - 落盘：`<dataRoot>/<project>/<端口>-<YYYYMMDD-HHMMSS>.slog`。Windows 保留名会被改写：`COM8` → 文件名/`captureId` 为 `_COM8-…`（正常现象）。
-- `serial_tail` 返回 `{cursor, lines:[{t,seq,text,dir,partial}], pending, head, state, bytesRx, bytesTx, startedAt}`：`seq` 是该方向**字节偏移**，不是行号；省略 `cursor` = 回看 ring 尾部（约 256KB）；`pending` 是未断行残片，不是丢包；`timeoutMs>0` 是长轮询，比 tight loop 省调用。
+- `serial_tail` 返回 `{cursor, lines:[{t,seq,text,dir,partial}], pending, head, state, bytesRx, bytesTx, startedAt}`：`seq` 是该方向**字节偏移**，不是行号；省略 `cursor` = 回看 ring 内最近约 256KB（数据不足 256KB 时就是从头开始）；`pending` 是未断行残片，不是丢包；`timeoutMs>0` 是长轮询，比 tight loop 省调用。
 - `serial_send`：`text` 与 `hex` 只能给一个；设备通常要**行尾**才把输入当一行回显（`append:'lf'` 或 `'crlf'`），`none` 可能只回显裸字节。发送也会进录制（tx 方向）。
 - `serial_close` 要等落盘：几十 MB 的录制可能占用几秒；调用超时先用 `serial_ports` 核对该 portId 状态，不要盲目重发 open。
 - 用完必须 close；不自动重连，掉线（`E_DEVICE_LOST`）要重新 open。
@@ -50,9 +50,9 @@ serial_export {captureId, format?='text'|'hex'|'csv', timestamps?=true, encoding
 
 ## C 故障点（工作区脚本，事后重扫）
 
-- 脚本必须是工作区根下的 `.mjs/.js/.cjs`，导出 `createScanner(ctx)` → `{record(rec), finish?()}`。
+- 脚本必须是工作区根下的 **ESM 模块**（`.mjs/.js/.cjs`），写 `export function createScanner(ctx)` → `{record(rec), finish?()}`（漏写 `export` 会报 `E_SCAN_FAILED: script must export createScanner`）。
 - `record(rec)` 入参：`{t, monoUs, dir:'rx'|'tx', offset, data:Buffer}`；每次返回 **mark 数组或单个 mark**（不返回 = 无标记）；`finish()` 可在结尾补一条，返回值规则相同。
-- mark 字段：`anchor:{dir,offset,length}`（`offset` 必填）、`label`、`kind:'fault'|'state'|'note'`、`severity:'error'|'warn'|'info'`、`t`、`code:{file,symbol}`、`hypothesis`、`next:[{label, expect?}]`（对象数组，不是字符串）、`extra`。
+- mark 字段：`anchor:{dir,offset,length}`（`offset` 必填；`length=0` 表示不指向连续字节，取上下文需自己按 offset 扩窗）、`label`、`kind:'fault'|'state'|'note'`、`severity:'error'|'warn'|'info'`、`t`、`code:{file,symbol}`、`hypothesis`、`next:[{label, expect?}]`（对象数组，不是字符串）、`extra`。
 - 沙箱：不能 `import`；只有 `Buffer` 与空 console；默认 20s 超时（`timeoutMs` 可调）、可取消、最多 5000 条 mark。
 - **工作区根**：默认是宿主进程工作目录（DSH 桌面端通常是 `<用户>\.dsh\profiles\desktop`），不是当前对话的工作目录；**相对路径也按宿主 cwd 解析**。不确定时直接 `serial_scan`：`E_SCRIPT_OUTSIDE_WORKSPACE` 或 `E_NO_SUCH_SCRIPT` 的 message/hint 会给出允许的绝对根。场景文件同理（或直接传场景对象，绕开路径）。
 
@@ -73,7 +73,7 @@ serial_fsm_start {portId, scenario}                    → {runId, mode:'live', 
 serial_fsm_wait {runId, timeoutMs?=5000}               → {runId, status, marks}   ← 长轮询下一次转移或超时
 serial_fsm_event {runId, name}                         → {runId, status, marks}   ← 注入 event:<name>
 serial_fsm_status {runId}                              → {runId, portId, alive, marks, status}
-serial_fsm_stop {runId}                                → {runId, stopped, persisted, trace}
+serial_fsm_stop {runId}                                → {runId, stopped, persisted(=写入录制的 mark 数), trace}
 ```
 
 ```json
@@ -107,9 +107,9 @@ serial_fsm_stop {runId}                                → {runId, stopped, pers
 - **写了 `send` 就必须同时写 `expect` + `waitMs` + `goto`**（不发盲包，否则 `E_BAD_SCENARIO`）；纯转换只要 `goto`。
 - `onTimeout`：`retry`(0..10)、`retryDelayMs`、`goto`、`mark`、`severity`、`stop:true`（停机）。
 - 状态级 `after`：`{ms, goto, mark?, severity?}`，到点自动跳。**自环（goto 回自己）会重置计时**，所以“安静超时”要放在没有自环的状态；`simulate` 的时钟锚定第一条录制，initial 态的 after 不会在首行乱触发。
-- `scenario` 传对象，或 `{path}` 指向工作区 `.json`（≤256KB）。
+- `scenario` 传对象，或 `{path}` 指向工作区根的 `.json`（≤256KB，路径按宿主 cwd 解析）。
 - 一端口一机器：重复 start → `E_FSM_BUSY`；只有端口持有者能 start（否则 `E_NOT_OWNER`）。端口 close/被接管/会话结束 → 机器自动停，`runId` 失效（`E_NO_SUCH_RUN`）。
-- 先 `simulate`（不碰端口，不能注入 event，发送只记录不执行）再 live；`trace` 每项 `{at, from, to, via, note}`，`status` 是 `{name, state, enteredAt, waitingFor, stopped, events, lines, trace}`。
+- 先 `simulate`（不碰端口，不能注入 event，发送只记录不执行）再 live；`tailMs` 内会按定时器 deadline 连续推进，链式 `after` 也能连续触发；`trace` 每项 `{at, from, to, via, note}`，`status` 是 `{name, state, enteredAt, waitingFor, stopped, events, lines, trace}`。
 
 ## 录制归属与清理
 
@@ -131,6 +131,7 @@ serial_fsm_stop {runId}                                → {runId, stopped, pers
 | `E_FSM_BUSY` / `E_NO_SUCH_RUN` | 端口已有机器 / runId 已失效 | 停旧的 / 重新 start |
 | `E_SCRIPT_OUTSIDE_WORKSPACE` / `E_NO_SUCH_SCRIPT` | 脚本路径不对 | 按 hint 的根目录放 / 先写文件 |
 | `E_SCAN_FAILED` | 脚本抛错或返回值不合契约 | 按 message 修脚本（record/finish 返回数组或单个 mark） |
+| `E_INTERNAL` | 插件内部异常 | 读 hint；换成内联场景/对象重试一次，仍失败就记录并报告 |
 | `E_SCAN_TIMEOUT` / `E_SCAN_CANCELLED` | 脚本超时/被取消 | 调大 `timeoutMs` 或修死循环；需要就重跑 |
 | `E_READ_ONLY` | 清理工具不能删 | 只给计划；删除找用户 |
 | `E_DATA_ROOT_INVALID` | 数据根不可写 | 检查插件 `dataRoot` 配置 |
