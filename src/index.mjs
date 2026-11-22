@@ -7,6 +7,8 @@
  */
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { readFile } from 'node:fs/promises';
+import { ioPath } from './paths.mjs';
 import { Hub } from './hub.mjs';
 import { Store } from './store.mjs';
 import { SerialService } from './service.mjs';
@@ -60,7 +62,7 @@ async function mount(ctx, settings) {
   }
 
   mountRoutes(ctx, service, settings);
-  mountLifecycle(ctx, service);
+  mountLifecycle(ctx, service, settings);
   return { hub, store, service, dataRoot };
 }
 
@@ -91,10 +93,109 @@ async function purgeSessionCaptures(service, sessionId) {
   return removed;
 }
 
-function mountLifecycle(ctx, service) {
+/** How often the host's archive list is re-read. Cheap: one tiny JSON file. */
+const DEFAULT_ARCHIVE_POLL_MS = 2000;
+
+/**
+ * Where the host keeps "which conversations the user archived".
+ *
+ * Archiving is a workspace-storage edit, not a session teardown: DSH 0.2.2 only
+ * appends the id to `<DSH_HOME>/storages/workspace.json` ->
+ * `global.archivedSessionIds` and touches nothing else. The session is not
+ * disposed, so `session/disposed` never fires for an archive and the recording
+ * stayed behind. Watching that list is the only observable signal the host
+ * offers a plugin (SPEC 11.2).
+ */
+export function archivedSessionsFile(settings = {}) {
+  const home = settings.dshHome || process.env.DSH_HOME || join(homedir(), '.dsh');
+  return join(home, 'storages', 'workspace.json');
+}
+
+/** The archived ids, or null when the file cannot be read/parsed right now. */
+async function readArchivedSessionIds(file) {
+  try {
+    const doc = JSON.parse(await readFile(ioPath(file), 'utf8'));
+    const list = doc && doc.global && doc.global.archivedSessionIds;
+    if (!Array.isArray(list)) return [];
+    return list.map((value) => String(value)).filter(Boolean);
+  } catch {
+    // Missing or half-written file: keep the previous snapshot and retry. A
+    // parse failure must never be read as "nothing is archived".
+    return null;
+  }
+}
+
+/**
+ * Every recording one archived conversation produced, gone. Ports are released
+ * first so an in-flight capture is flushed (and no longer refuses deletion).
+ */
+async function purgeConversation(service, sessionId) {
+  if (!sessionId) return [];
+  await service.stopRunsOwnedBy([sessionId], 'session-archived').catch(() => {});
+  await service.closeOwnedBy([sessionId], 'session-archived').catch(() => {});
+  return purgeSessionCaptures(service, sessionId);
+}
+
+/**
+ * Follow the host's archive list. The first read is a reconcile pass (a
+ * conversation archived while the host was down still loses its recordings);
+ * later reads only act on ids that just appeared.
+ */
+function watchArchivedSessions(service, settings, isShuttingDown) {
+  const file = archivedSessionsFile(settings);
+  const configured = Number(settings.archivePollMs);
+  const pollMs = Number.isFinite(configured) && configured > 0 ? configured : DEFAULT_ARCHIVE_POLL_MS;
+  let known = null;
+  let busy = false;
+  let timer = null;
+
+  const tick = async () => {
+    if (busy || isShuttingDown()) return;
+    busy = true;
+    try {
+      const ids = await readArchivedSessionIds(file);
+      if (!ids) return;
+      const fresh = known === null ? ids : ids.filter((id) => !known.has(id));
+      known = new Set(ids);
+      for (const id of fresh) {
+        if (isShuttingDown()) return;
+        const removed = await purgeConversation(service, id);
+        if (removed.length > 0) {
+          console.warn('serial-trigger: removed ' + removed.length + ' recording(s) of an archived conversation', id);
+        }
+      }
+    } catch (err) {
+      console.warn('serial-trigger: cannot reconcile archived conversations', err);
+    } finally {
+      busy = false;
+    }
+  };
+
+  tick().catch(() => {});
+  try {
+    timer = setInterval(() => { tick().catch(() => {}); }, pollMs);
+    if (timer && typeof timer.unref === 'function') timer.unref();
+  } catch {
+    timer = null;
+  }
+  return () => {
+    if (timer) clearInterval(timer);
+    timer = null;
+  };
+}
+
+function mountLifecycle(ctx, service, settings = {}) {
   // Archiving a conversation removes the recordings it produced; app shutdown
   // must never do that, so a teardown flag keeps the purge off.
   let shuttingDown = false;
+  // Archiving never disposes the session, so the host's archive list is the
+  // real trigger; session/disposed stays for close/shutdown paths.
+  let stopArchiveWatch = null;
+  try {
+    stopArchiveWatch = watchArchivedSessions(service, settings, () => shuttingDown);
+  } catch (err) {
+    console.warn('serial-trigger: cannot watch archived conversations; recordings may survive archiving', err);
+  }
   if (typeof ctx.on === 'function') {
     try {
       ctx.on('session/event', (session, event) => {
@@ -155,7 +256,11 @@ function mountLifecycle(ctx, service) {
   // event is the supported teardown hook.
   if (typeof ctx.on === 'function') {
     try {
-      ctx.on('dispose', () => { shuttingDown = true; service.dispose().catch(() => {}); });
+      ctx.on('dispose', () => {
+        shuttingDown = true;
+        if (stopArchiveWatch) stopArchiveWatch();
+        service.dispose().catch(() => {});
+      });
     } catch (err) {
       console.warn('serial-trigger: cannot register the dispose hook', err);
     }

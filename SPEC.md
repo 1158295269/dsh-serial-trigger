@@ -223,14 +223,26 @@ v0.1 的模糊查询用 `digest LIKE '%kw%'`；量大了再上 FTS5（编译选�
 
 ---
 
-### 11.2 归档即清（v0.3.4）
+### 11.2 归档即清（v0.3.4，v0.3.5 修正触发方式）
 
-对话归档（宿主触发 `session/disposed`）时，该会话产生的**所有**录制都会被删除：
+对话归档时，该会话产生的**所有**录制都会被删除。
+
+**归档信号**：桌面端归档只是工作区存储的一次写入——把会话 id 追加到
+`<DSH_HOME>/storages/workspace.json` 的 `global.archivedSessionIds`，既不 dispose 会话，
+也不发 `session/disposed`。v0.3.4 订阅后者，所以真实归档时一条都没触发（日志里
+`held back capture` / `cannot subscribe` 全部零命中，索引行也没写）。v0.3.5 起改为观察该列表：
+
+- 挂载时先对账一次：宿主停机期间归档的会话，其录制同样会被清掉；
+- 之后每 `archivePollMs`（默认 2000ms）读一次，只处理新出现的 id；文件读不到/解析失败时
+  保留上一次快照并重试，绝不把"读失败"当成"没有归档"；
+- `session/disposed` 订阅保留：关闭会话、插件卸载等路径仍按 23.4 收尾。
+
+清理规则：
 
 - 归属依据是录制行的 `session_id`。面板打开的端口本来就有 sessionId；工具打开的端口靠
   `session/event` 里的 `tool/call` / `tool/ptc-dispatch` 把 `callId` 映射到会话
   （PTC 嵌套调用的 callId 形如 `<外层callId>:ptc:1`，按前缀匹配），见 `src/identity.mjs`；
-- 顺序：先停状态机 → 再关端口（正常收尾落盘）→ 等 1.5 秒 → 删除该会话的全部录制；
+- 顺序：先停状态机 → 再关端口（正常收尾落盘）→ 删除该会话的全部录制；
 - 保护：宿主退出（插件 dispose）时**不删**；每个文件删除有 5 秒超时，删不掉就保留并记日志；
 - 保留策略（11.1）不自动删任何东西，**归档删除是唯一会自动发生的删除**。
 
@@ -602,12 +614,14 @@ ctx.slots.register({ name: 'conversation.view', id: 'serial-trigger', order: 20,
 
 | 事件 | 处理 |
 |---|---|
-| 会话归档 / 关闭（`session/disposed`） | 关闭该会话及其 agent 拥有的全部端口，录制正常收尾 |
-| 插件卸载 / 宿主退出 | `service.dispose()`：关闭所有端口、flush 录制、清空游标 |
+| 会话归档 | 观察宿主工作区存储的 `archivedSessionIds`（见 11.2）；关端口、收尾录制、删除该会话的录制 |
+| 会话关闭（`session/disposed`） | 关闭该会话及其 agent 拥有的全部端口，录制正常收尾 |
+| 插件卸载 / 宿主退出 | `service.dispose()`：关闭所有端口、flush 录制、清空游标；**不删录制** |
 | 端口被接管 | 原录制收尾，旧 `portId` 返回 `E_PORT_REPLACED` |
 
-实现位置：`src/index.mjs` 的 `mountLifecycle()`，订阅 `ctx.on('session/disposed', …, { global: true })`，
-并用 `ctx.effect` 注册卸载时的清理回调。
+实现位置：`src/index.mjs` 的 `mountLifecycle()`：`ctx.on('session/disposed', …, { global: true })`
+负责关闭/退出路径，`watchArchivedSessions()` 负责归档（挂载对账 + 轮询），`dispose` 事件停掉轮询
+并调用 `service.dispose()`。
 
 
 ### 22.5 初版实现（v0.3.0）
