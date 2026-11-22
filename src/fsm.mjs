@@ -214,6 +214,13 @@ export class Machine {
     return out;
   }
 
+  /** Earliest instant at which tick() has work: pending expectation, then the state's after. */
+  nextDeadline() {
+    if (this.pending) return this.pending.deadline;
+    if (this.deadline) return this.deadline;
+    return Infinity;
+  }
+
   /** Drain side effects queued by transitions. */
   drainActions() {
     const out = this.actions;
@@ -268,9 +275,19 @@ export function simulate(def, lines, opts = {}) {
   // after the recording ended" is the point of the knob.
   const lastT = lines.length ? Number(lines[lines.length - 1].t) || startAt : startAt;
   const endAt = lastT + Math.max(0, Number(opts.tailMs) || 0);
-  machine.tick(endAt);
-  for (const action of machine.drainActions()) {
-    if (action.type === 'mark') marks.push({ at: endAt, label: action.label, severity: action.severity });
+  // Advance the clock to each timer deadline until the window closes, so chained
+  // after timers fire inside the same tailMs window instead of only the first one.
+  let cur = lastT;
+  let guard = 0;
+  while (guard++ < 1000 && !machine.stopped) {
+    const next = Math.min(machine.nextDeadline(), endAt);
+    if (!Number.isFinite(next) || next > endAt) break;
+    cur = Math.max(cur, next);
+    machine.tick(cur);
+    for (const action of machine.drainActions()) {
+      if (action.type === 'send') sends.push({ at: cur, text: action.text });
+      if (action.type === 'mark') marks.push({ at: cur, label: action.label, severity: action.severity, ...(action.extra === undefined ? {} : { extra: action.extra }) });
+    }
   }
   return { state: machine.state, trace: machine.trace, marks, sends };
 }

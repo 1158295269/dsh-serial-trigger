@@ -10,6 +10,7 @@ import { Hub, TOPIC } from './hub.mjs';
 import { LineAssembler } from './lines.mjs';
 import { KIND } from './codec.mjs';
 import { join, resolve, sep } from 'node:path';
+import { readFile, stat } from 'node:fs/promises';
 
 import { SerialError } from './errors.mjs';
 import { createSerialBackend } from './serial-backend.mjs';

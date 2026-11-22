@@ -121,3 +121,21 @@ test('F8 simulate anchors the clock at the first line and tailMs past the last',
   assert.equal(simulate(longWait, spread, { tailMs: 5000 }).state, 'quiet', '9000+5000 < 15000');
   assert.equal(simulate(longWait, spread, { tailMs: 6000 }).state, 'late', '9000+6000 crosses 15000');
 });
+
+// simulate() advanced the clock only once after the last line, so a chained
+// after (state A -> B after 1s, B -> C after another 1s) could fire only the
+// first hop inside tailMs.
+test('F9 chained after timers fire inside the same tailMs window', () => {
+  const chained = {
+    initial: 'a',
+    states: {
+      a: { on: {}, after: { ms: 1000, goto: 'b' } },
+      b: { on: {}, after: { ms: 1000, goto: 'c' } },
+      c: { on: {} },
+    },
+  };
+  const lines = [{ t: 5000, text: 'HB' }];
+  assert.equal(simulate(chained, lines, { tailMs: 500 }).state, 'a');
+  assert.equal(simulate(chained, lines, { tailMs: 1200 }).state, 'b', 'only the first hop fits');
+  assert.equal(simulate(chained, lines, { tailMs: 2500 }).state, 'c', 'both hops fit');
+});

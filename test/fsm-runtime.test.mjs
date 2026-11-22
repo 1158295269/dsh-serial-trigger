@@ -111,3 +111,20 @@ test('R7 trace entries say whether a send was simulated or executed', async (t) 
   const fake = sim.trace.find((x) => x.effects && x.effects.length);
   if (fake) assert.equal(fake.effects[0].status, 'simulated');
 });
+
+// Regression: loadScenario() read fs/promises without importing it, so a
+// {path} scenario failed with "stat is not defined" (E_INTERNAL).
+test('R8 a scenario file inside the workspace loads and runs', async (t) => {
+  const h = await harness();
+  t.after(h.cleanup);
+  const file = join(h.root, 'watch.fsm.json');
+  await writeFile(file, JSON.stringify(SCENARIO), 'utf8');
+  h.service.feed(h.portId, Buffer.from('HB 1 100\n'));
+  await sleep(40);
+  const started = await h.service.fsmStart({ scenario: file, portId: h.portId, owner: { kind: 'agent', id: 'a1' } });
+  assert.equal(started.status.name, 'hb-watch');
+  await h.service.fsmStop(started.runId);
+  const closed = await h.service.close(h.portId);
+  const sim = await h.service.fsmSimulate(closed.captureId, { scenario: file });
+  assert.equal(sim.state, 'beating');
+});
