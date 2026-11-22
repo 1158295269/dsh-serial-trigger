@@ -11,7 +11,8 @@
   录制清理工具、SKILL.md
 - v0.3.3 本次：
   - **录制归属**：captures 增加 `origin`（agent / human）。工具开的记 agent，面板开的记 human；
-    `serial_cleanup` 默认只清 agent 的，返回里带 `skippedHuman`；`includeHuman:true` 才动人的录制
+    `serial_cleanup` 只返回计划（只读），**删除不是模型能发起的动作**（传 planId → `E_READ_ONLY`）；
+    人的录制永不自动删除，删除能力只留在 `Store.applyCleanup` 供将来的自动保留策略用
   - **FSM 超时策略可配置**：转换上可写 `onTimeout: { retry, retryDelayMs, goto, mark, severity, stop }`；
     不写时行为不变；离线 simulate 同样生效
   - live 循环原来只在"有状态转移"时才 drain 副作用，超时重发/停机这类无转移的动作会被吞掉，已修

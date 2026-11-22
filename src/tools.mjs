@@ -379,7 +379,7 @@ export function createTools(service) {
     },
     {
       name: 'serial_cleanup',
-      description: '清理历史录制。默认只做计划（dryRun）：返回将删除的条数、字节数和前 50 条；确认后传 planId 真正删除。',
+      description: '查看历史录制的保留情况（只读）：返回若按当前策略清理会涉及多少条、多少字节、跳过多少条人的录制。它不会删除任何东西；删除不由模型发起。',
       parameters: {
         type: 'object',
         properties: {
@@ -387,17 +387,21 @@ export function createTools(service) {
           olderThanDays: { type: 'number', description: '只清早于 N 天的录制，默认 0（不限）' },
           keepLast: { type: 'number', description: '保留最近的 N 条，其余可清，默认 0' },
           project: { type: 'string', description: '只清某个工程的录制' },
-          includeHuman: { type: 'boolean', description: '默认 false：只清 agent 自己录的；人类自己开的录制不动' },
-          planId: { type: 'string', description: '上一次计划返回的 planId，传了就执行删除' },
+          includeHuman: { type: 'boolean', description: '默认 false：只看 agent 自己录的；人类自己开的录制不动' },
         },
         additionalProperties: false,
       },
       async execute(args) {
         const opts = args || {};
-        if (!opts.planId && opts.dryRun === false) {
-          return badArg('refusing to delete without a plan: call serial_cleanup({olderThanDays|keepLast}) first, then pass planId');
+        // 只读：删除永远不是模型能发起的行为（用户明确要求）。
+        if (opts.planId) {
+          return fail(new SerialError('E_READ_ONLY', 'recording deletion is not a model action', {
+            hint: 'This tool only reports the retention plan. Deleting recordings is a human decision, done outside the tool surface.',
+            fix: ['serial_cleanup({olderThanDays, keepLast}) to inspect', 'ask the user to delete the capture themselves'],
+            retryable: false,
+          }));
         }
-        try { return ok(await service.cleanup(opts)); } catch (e) { return fail(e); }
+        try { return ok(await service.cleanup({ ...opts, planOnly: true })); } catch (e) { return fail(e); }
       },
     },  ];
 

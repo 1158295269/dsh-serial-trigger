@@ -209,14 +209,17 @@ v0.1 的模糊查询用 `digest LIKE '%kw%'`；量大了再上 FTS5（编译选�
 
 录制在打开时记下 `origin`：
 
-| 打开方式 | origin | 能否被 `serial_cleanup` 删 |
+| 打开方式 | origin | 保留策略 |
 |---|---|---|
-| 工具（模型） | `agent` | 能，默认就在清理范围里 |
-| 面板（人） | `human` | **不能**，除非显式传 `includeHuman:true` |
+| 工具（模型） | `agent` | 在自动保留范围内（策略见下） |
+| 面板（人） | `human` | **永不自动删除** |
 
-`planCleanup` 默认只看 `origin=agent`，并在返回里给出 `skippedHuman`，
-让调用者知道有多少条人的录制被跳过。旧索引通过 `ALTER TABLE ADD COLUMN ... DEFAULT 'human'`
-迁移，历史录制一律按人的录制保护起来。
+`planCleanup` 默认只看 `origin=agent`，并在返回里给出 `skippedHuman`，让调用者知道有多少条人的录制被跳过。
+旧索引通过 `ALTER TABLE ADD COLUMN ... DEFAULT 'human'` 迁移，历史录制一律按人的录制保护起来。
+
+**删除不是模型能发起的动作**：`serial_cleanup` 工具只返回计划（只读），传 `planId` 会被拒绝（`E_READ_ONLY`）。
+删除能力只保留在插件内部（`Store.applyCleanup`），供未来的自动保留策略调用。
+人也不会通过面板做批量清理；人只能在面板里逐条删除自己不需要的那一条录制。
 
 ---
 

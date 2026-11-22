@@ -581,8 +581,8 @@ export class SerialService {
     return closed;
   }
 
+  /** Read-only retention view. Deletion is an internal policy decision, never a caller action. */
   async cleanup(opts = {}) {
-    if (opts.planId) return this.store.applyCleanup(opts.planId);
     return this.store.planCleanup(opts);
   }
 
