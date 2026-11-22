@@ -755,9 +755,11 @@ window.__ModuleLoader__.load({
                 onClick: () => {
                   if (p.state === 'open') {
                     // Watching an occupied port is free; taking the pen is a
-                    // separate, explicit action (the 接管写入 button).
+                    // separate, explicit action (the 接管写入 button). Selecting
+                    // a row is never a takeover, so the badge must not linger.
                     setActive(p.portId)
                     lastPortName.current = p.port
+                    setTakenOver(false)
                     return
                   }
                   open(p.port)
