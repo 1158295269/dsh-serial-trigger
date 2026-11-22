@@ -189,7 +189,7 @@ function mountLifecycle(ctx, service, settings = {}) {
   // must never do that, so a teardown flag keeps the purge off.
   let shuttingDown = false;
   // Archiving never disposes the session, so the host's archive list is the
-  // real trigger; session/disposed stays for close/shutdown paths.
+  // real (and only) delete trigger; session/disposed only releases ports.
   let stopArchiveWatch = null;
   try {
     stopArchiveWatch = watchArchivedSessions(service, settings, () => shuttingDown);
@@ -230,18 +230,15 @@ function mountLifecycle(ctx, service, settings = {}) {
         service.stopRunsOwnedBy([...ids], 'session-disposed').catch(() => {});
         const sessionId = session && session.id ? String(session.id) : '';
         if (sessionId) ids.add(sessionId);
+        // Closing a conversation (or a sub-agent's session finishing) releases
+        // its ports and flushes their captures — it does NOT delete recordings.
+        // Only archiving deletes (SPEC 11.2): a disposed session must keep its
+        // evidence, otherwise delegated work would erase the parent's captures.
         service.closeOwnedBy([...ids], 'session-disposed')
-          .then(async () => {
-            if (shuttingDown || !sessionId) return [];
-            // Let a shutdown tear the process down first: archiving is a user
-            // action, quitting must never delete a conversation's recordings.
-            await new Promise((resolve) => setTimeout(resolve, 1500));
-            if (shuttingDown) return [];
-            return purgeSessionCaptures(service, sessionId);
-          })
           .catch((err) => {
             console.warn('serial-trigger: releasing ports for a disposed session failed', err);
           });
+        if (sessionId) forgetCallsOfSession(sessionId);
       }, { global: true });
     } catch (err) {
       console.warn('serial-trigger: cannot subscribe to session/disposed; ports may outlive sessions', err);

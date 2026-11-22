@@ -106,7 +106,10 @@ async function writeArchiveList(home, ids) {
   }), 'utf8');
 }
 
-test('L5 archiving a conversation deletes the recordings it produced', async (t) => {
+// Closing a conversation (including a sub-agent's session finishing) releases its
+// ports but must keep the captures: only archiving deletes (SPEC 11.2). A
+// sub-agent's dispose used to erase the parent's evidence.
+test('L5 a disposed session releases its ports but keeps their recordings', async (t) => {
   const root = await mkdtemp(join(tmpdir(), 'life5-'));
   const ctx = fakeCtx();
   await apply(ctx, { dataRoot: join(root, 'data') });
@@ -118,14 +121,15 @@ test('L5 archiving a conversation deletes the recordings it produced', async (t)
   const byName = Object.fromEntries(createTools(mounted.service).map((x) => [x.name, x]));
   const opened = await byName.serial_open.execute({ port: 'MOCK:ARCH2', project: 'p' }, { callId: 'call_gone:ptc:1' });
   mounted.service.feed(opened.data.portId, Buffer.from('bye\n'));
-  await byName.serial_close.execute({ portId: opened.data.portId }, { callId: 'call_gone:ptc:2' });
   const path = opened.data.path;
-  assert.equal(existsSync(path), true);
 
   ctx.emit('session/disposed', { id: 's-gone' });
-  const deadline = Date.now() + 8000;
-  while (Date.now() < deadline && existsSync(path)) await new Promise((r) => setTimeout(r, 50));
-  assert.equal(existsSync(path), false, 'the archived conversation recordings must be gone');
+
+  // The port is closed and flushed by the dispose path...
+  assert.equal(await waitFor(() => mounted.service.status(opened.data.portId).state === 'closed', 4000), true);
+  // ...but the capture (and its index row) survive.
+  assert.equal(existsSync(path), true, 'disposing a session must not delete its recordings');
+  assert.equal(mounted.service.store.listCapturesOfSession('s-gone').length, 1, 'the index row must survive');
 });
 
 // The host never emits session/disposed for an archive: it only appends the id

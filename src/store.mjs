@@ -211,10 +211,16 @@ export class Store {
     const context = opts.context ?? 2;
     const ring = [];
     let lineNo = 0;
+    let offsetRx = 0;
+    let offsetTx = 0;
     const max = opts.maxHits || 50;
     await reader.scan((rec) => {
       if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return;
-      for (const line of la.feed(rec)) {
+      // The assembler needs the batch's absolute byte seq; the file reader only
+      // reports per-record offsets, so track one cursor per direction.
+      const seq = rec.kind === KIND.TX ? offsetTx : offsetRx;
+      if (rec.kind === KIND.TX) offsetTx += rec.bytes.length; else offsetRx += rec.bytes.length;
+      for (const line of la.feed({ bytes: rec.bytes, seq, tWallMs: rec.tWallMs })) {
         lineNo++;
         if (re.test(line.text)) {
           hits.push({
@@ -501,10 +507,15 @@ export class Store {
     const lines = [];
     let truncatedByCap = false;
     let seen = 0;
+    let offsetRx = 0;
+    let offsetTx = 0;
     await reader.scan(async (rec) => {
       if (lines.length >= maxLines) { truncatedByCap = true; return false; }
       if (rec.kind !== KIND.RX && rec.kind !== KIND.TX) return undefined;
-      for (const line of la.feed(rec)) {
+      // Same reason as grep(): the reader has no batch seq of its own.
+      const seq = rec.kind === KIND.TX ? offsetTx : offsetRx;
+      if (rec.kind === KIND.TX) offsetTx += rec.bytes.length; else offsetRx += rec.bytes.length;
+      for (const line of la.feed({ bytes: rec.bytes, seq, tWallMs: rec.tWallMs })) {
         if (lines.length >= maxLines) { truncatedByCap = true; break; }
         lines.push({ t: line.tWallMs, seq: line.seq, text: line.text, dir: rec.kind === KIND.TX ? 'tx' : 'rx' });
       }

@@ -157,7 +157,8 @@ export class Machine {
     for (const [key, action] of Object.entries(on)) {
       const m = compileMatcher(key);
       if (m.kind !== 'line' || !m.re.test(text)) continue;
-      out.push(...this._fire(action, now, 'line:' + key));
+      // key already reads "line:/regex/"; prefixing it again produced "line:line:/...".
+      out.push(...this._fire(action, now, key));
       break;
     }
     return out;
@@ -248,12 +249,16 @@ export function simulate(def, lines, opts = {}) {
     for (const t of machine.tick(now)) { /* trace already recorded */ }
     for (const action of machine.drainActions()) {
       if (action.type === 'send') sends.push({ at: now, text: action.text });
-      if (action.type === 'mark') marks.push({ at: now, label: action.label, severity: action.severity, extra: action.extra });
+      // Only carry extra when the scenario set it: an own property holding
+      // undefined is not lossless JSON and would sink the whole tool result.
+      if (action.type === 'mark') marks.push({ at: now, label: action.label, severity: action.severity, ...(action.extra === undefined ? {} : { extra: action.extra }) });
     }
     machine.feedLine(line.text, now);
     for (const action of machine.drainActions()) {
       if (action.type === 'send') sends.push({ at: now, text: action.text });
-      if (action.type === 'mark') marks.push({ at: now, label: action.label, severity: action.severity, extra: action.extra });
+      // Only carry extra when the scenario set it: an own property holding
+      // undefined is not lossless JSON and would sink the whole tool result.
+      if (action.type === 'mark') marks.push({ at: now, label: action.label, severity: action.severity, ...(action.extra === undefined ? {} : { extra: action.extra }) });
     }
   }
   const endAt = startAt + Math.max(0, Number(opts.tailMs) || 0);

@@ -1,15 +1,16 @@
-# 交接：串口插件 v0.3.5
+# 交接：串口插件 v0.3.6
 
 仓库 `D:\文档\杂项\dsh-serial-trigger`，分支 `main`。
 先读 `SKILL.md`（模型怎么用）、`SPEC.md` §11.1（谁录的谁来清）、§22.6（超时与失败降级）、§23.5（单写者）。
 
 ## 现在到哪了
 
-- 单测 **158 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
+- 单测 **163 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
 - 真机冒烟通过（2026-11-22，COM8，板子空闲）：`bin/shell-check.mjs` 7/7（字节透明 sha256 一致、
   seq 无洞、句柄 2→2、索引 11 行）、`bin/rules-check.mjs` 12/12（扫描/标记/字节引用/越界与超时守卫）
 - 工具 **18 个**（含 `serial_cleanup`）
-- `SKILL.md` 已升级到 v0.3.5：18 个工具、FSM 场景语法、扫描脚本契约、归属与归档、错误码速查（给 agent 的唯一用法说明）
+- `SKILL.md` 已升级到 v0.3.6：18 个工具、FSM 场景语法、扫描脚本契约、归属与归档、错误码速查（给 agent 的唯一用法说明）
+- 工具结果必须是宿主可接受的 **lossless JSON**（不允许 undefined / NaN / -0 / Buffer 等），新测试 `test/tool-output.test.mjs` 守住这个边界
 - v0.3.3 之前：单写者模型、面板只读/接管跟随（真机验过）、可取消扫描、工具身份兼容、
   录制清理工具、SKILL.md
 - v0.3.3 / v0.3.4：
@@ -26,6 +27,17 @@
     `session/disposed` 在归档时从不触发（实测 session-cd58a9c5 归档后，录制、索引行都在，
     日志里 held back capture / cannot subscribe 零命中）。现改为观察该列表：挂载对账一次 +
     每 2 秒轮询新归档；`session/disposed` 保留给关闭/退出路径（SPEC 11.2）
+- v0.3.6（盲跑验收修复）：
+  - 用独立 subagent 只读 SKILL.md 盲跑 L1 抓包→L2 扫描脚本→L3 FSM：任务最终能做完（101 次工具调用 / 16.5 分钟），但探出 3 个接口缺陷：
+  - **grep 有命中即失败**：`store.grep` 给 LineAssembler 的 batch 没有 `seq`，hits 里 `seq=undefined`，
+    宿主判 "not lossless JSON" 整个结果报废；decode-lines（`serial_capture` 面板视图 / simulate 读行）同病，已修
+  - **simulate 带 mark 即失败**：marks 里 `extra: undefined` 同类报废；已改为字段缺省不携带
+  - **子 agent 会话 dispose 误删录制**：v0.3.4 起 `session/disposed` 会删该会话录制，而委派 subagent 结束就会 dispose，
+    于是父会话证据被静默删除（盲跑实测：trial 的 4 条录制 + 索引行消失）。已改为 **dispose 只收尾、不删录制**，
+    删除只由归档触发（L5 测试改写）
+  - 附带：`trace.via` 行匹配曾输出 `line:line:/re/`，已去重；SKILL 补了工作区根、grep 返回结构、
+    seq 语义（字节偏移）、`next[]` 对象结构、发送行尾/回显、close 可能慢、simulate 不能注入 event 等 11 处说明
+
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24
 
@@ -42,7 +54,9 @@
 
 ## 下次接手先做
 
-1. 没有排期项；v0.4 可选（SPEC §24），动手前先确认真要投入；
+1. **让 v0.3.6 生效**：改动只在新进程里加载，需重启宿主（或可先试 profile 配置 touch 触发重载）。
+   重启后跑 2 次"只读 SKILL.md 盲跑"（同 turn 的 trial-1 提示词）验证稳定性；
+2. 没有排期项；v0.4 可选（SPEC §24），动手前先确认真要投入；
 2. 动面板用 Windows-MCP + 区域截图（整屏 Snapshot 30–75 秒，太慢）。
 ## 约束
 
