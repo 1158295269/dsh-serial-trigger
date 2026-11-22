@@ -377,7 +377,28 @@ export function createTools(service) {
         try { return ok(await service.fsmStop(args.runId)); } catch (e) { return fail(e); }
       },
     },
-  ];
+    {
+      name: 'serial_cleanup',
+      description: '清理历史录制。默认只做计划（dryRun）：返回将删除的条数、字节数和前 50 条；确认后传 planId 真正删除。',
+      parameters: {
+        type: 'object',
+        properties: {
+          dryRun: { type: 'boolean', description: '默认 true：只给计划，不删。' },
+          olderThanDays: { type: 'number', description: '只清早于 N 天的录制，默认 0（不限）' },
+          keepLast: { type: 'number', description: '保留最近的 N 条，其余可清，默认 0' },
+          project: { type: 'string', description: '只清某个工程的录制' },
+          planId: { type: 'string', description: '上一次计划返回的 planId，传了就执行删除' },
+        },
+        additionalProperties: false,
+      },
+      async execute(args) {
+        const opts = args || {};
+        if (!opts.planId && opts.dryRun === false) {
+          return badArg('refusing to delete without a plan: call serial_cleanup({olderThanDays|keepLast}) first, then pass planId');
+        }
+        try { return ok(await service.cleanup(opts)); } catch (e) { return fail(e); }
+      },
+    },  ];
 
   // DSH requires every tool to declare how its result is rendered.
   const output = {

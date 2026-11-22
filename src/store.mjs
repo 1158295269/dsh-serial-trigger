@@ -322,19 +322,24 @@ export class Store {
    */
   async planCleanup({ olderThanDays = 0, keepLast = 0, project } = {}) {
     const rows = this.listCaptures({ project, limit: 100000 });
+    // listCaptures returns SQL columns (started_ms / bytes_rx). Reading camelCase
+    // here used to make olderThanDays match every row — a plan that deletes
+    // everything instead of only the old captures.
+    const startedOf = (row) => Number(row.started_ms ?? row.startedMs ?? 0);
+    const bytesOf = (row) => Number(row.bytes_rx ?? row.bytes ?? 0);
     const cutoff = Number(olderThanDays) > 0 ? Date.now() - Number(olderThanDays) * 86400000 : 0;
     const victims = rows
-      .sort((a, b) => (b.startedMs || 0) - (a.startedMs || 0))
+      .sort((a, b) => startedOf(b) - startedOf(a))
       .filter((row, index) => index >= Number(keepLast || 0))
-      .filter((row) => !cutoff || (row.startedMs || 0) < cutoff);
+      .filter((row) => !cutoff || startedOf(row) < cutoff);
     const planId = 'clean-' + createHash('sha1').update(victims.map((v) => v.id).join('|') + Date.now()).digest('hex').slice(0, 10);
     this.cleanupPlans.set(planId, { ids: victims.map((v) => v.id), at: Date.now() });
     return {
       planId,
       dryRun: true,
       count: victims.length,
-      bytes: victims.reduce((n, v) => n + (v.bytes || 0), 0),
-      items: victims.slice(0, 50).map((v) => ({ captureId: v.id, project: v.project, bytes: v.bytes, startedMs: v.startedMs })),
+      bytes: victims.reduce((n, v) => n + bytesOf(v), 0),
+      items: victims.slice(0, 50).map((v) => ({ captureId: v.id, project: v.project, bytes: bytesOf(v), startedMs: startedOf(v) })),
       truncated: victims.length > 50,
     };
   }
