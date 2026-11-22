@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { apply, currentMount } from '../src/index.mjs';
@@ -24,7 +25,7 @@ function fakeCtx() {
     tools: { register: () => () => {} },
     on(event, handler) { listeners.set(event, handler); return () => {}; },
     effect(fn) { const stop = fn(); if (typeof stop === 'function') effects.push(stop); return () => {}; },
-    emit(event, payload) { const h = listeners.get(event); return h ? h(payload) : undefined; },
+    emit(event, ...args) { const h = listeners.get(event); return h ? h(...args) : undefined; },
     listeners,
     effects,
   };
@@ -76,4 +77,44 @@ test('L3 closeOwnedBy ignores ports owned by others', async (t) => {
   const closed = await service.closeOwnedBy(['s9']);
   assert.deepEqual(closed, [p1.portId]);
   assert.equal(service.status(p2.portId).state, 'open');
+});
+
+test('L4 a tool call borrows the session from the host event', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'life4-'));
+  const ctx = fakeCtx();
+  await apply(ctx, { dataRoot: join(root, 'data') });
+  const mounted = currentMount();
+  t.after(async () => { await mounted.service.dispose(); });
+
+  // The host appends tool/call before the tool runs; the plugin remembers it.
+  ctx.emit('session/event', { id: 's-arch' }, { type: 'tool/call', data: { callId: 'call_arch' } });
+  const { createTools } = await import('../src/tools.mjs');
+  const byName = Object.fromEntries(createTools(mounted.service).map((x) => [x.name, x]));
+  const opened = await byName.serial_open.execute({ port: 'MOCK:ARCH1', project: 'p' }, { callId: 'call_arch:ptc:1' });
+  assert.equal(opened.ok, true);
+  const row = mounted.service.store.listCaptures({}).find((c) => c.id === opened.data.captureId);
+  assert.equal(row.session_id, 's-arch');
+  await byName.serial_close.execute({ portId: opened.data.portId }, { callId: 'call_arch:ptc:2' });
+});
+
+test('L5 archiving a conversation deletes the recordings it produced', async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'life5-'));
+  const ctx = fakeCtx();
+  await apply(ctx, { dataRoot: join(root, 'data') });
+  const mounted = currentMount();
+  t.after(async () => { await mounted.service.dispose(); });
+
+  ctx.emit('session/event', { id: 's-gone' }, { type: 'tool/call', data: { callId: 'call_gone' } });
+  const { createTools } = await import('../src/tools.mjs');
+  const byName = Object.fromEntries(createTools(mounted.service).map((x) => [x.name, x]));
+  const opened = await byName.serial_open.execute({ port: 'MOCK:ARCH2', project: 'p' }, { callId: 'call_gone:ptc:1' });
+  mounted.service.feed(opened.data.portId, Buffer.from('bye\n'));
+  await byName.serial_close.execute({ portId: opened.data.portId }, { callId: 'call_gone:ptc:2' });
+  const path = opened.data.path;
+  assert.equal(existsSync(path), true);
+
+  ctx.emit('session/disposed', { id: 's-gone' });
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline && existsSync(path)) await new Promise((r) => setTimeout(r, 50));
+  assert.equal(existsSync(path), false, 'the archived conversation recordings must be gone');
 });

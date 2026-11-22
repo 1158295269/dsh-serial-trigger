@@ -194,7 +194,7 @@ export class Store {
     if (opts.keyword) { where.push('(digest LIKE ? OR conversation LIKE ? OR port LIKE ?)'); const k = '%' + opts.keyword + '%'; args.push(k, k, k); }
     if (!opts.includeMissing) where.push('missing = 0');
     const sql =
-      'SELECT id, project, conversation, port, baud, path, started_ms, ended_ms, bytes_rx, lines, truncated, missing, origin, digest FROM captures' +
+      'SELECT id, project, conversation, session_id, port, baud, path, started_ms, ended_ms, bytes_rx, lines, truncated, missing, origin, digest FROM captures' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') +
       ' ORDER BY started_ms DESC LIMIT ' + (opts.limit || 20);
     return this.db.prepare(sql).all(...args);
@@ -328,6 +328,12 @@ export class Store {
    * Two-phase cleanup (SPEC §11): a dry run produces a plan, applying it deletes
    * exactly those captures. Deleting is irreversible, so the plan is explicit.
    */
+  /** Every capture attributed to one conversation (used when a session is archived). */
+  listCapturesOfSession(sessionId) {
+    if (!sessionId) return [];
+    return this.db.prepare('SELECT id FROM captures WHERE session_id = ?').all(String(sessionId));
+  }
+
   async planCleanup({ olderThanDays = 0, keepLast = 0, project, includeHuman = false } = {}) {
     const all = this.listCaptures({ project, limit: 100000 });
     // Human recordings are the user's own evidence: the agent may plan its own

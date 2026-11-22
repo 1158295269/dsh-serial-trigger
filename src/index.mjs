@@ -12,6 +12,7 @@ import { Store } from './store.mjs';
 import { SerialService } from './service.mjs';
 import { createTools } from './tools.mjs';
 import { createApi, dispatch } from './api.mjs';
+import { rememberCall, forgetCallsOfSession } from './identity.mjs';
 
 export const name = 'serial-trigger';
 export const inject = ['tools'];
@@ -71,7 +72,45 @@ async function mount(ctx, settings) {
  *    by agents that belong to it
  *  - plugin unload / host shutdown -> close everything, flushing captures
  */
+/**
+ * Deleting the recordings a conversation produced. Runs only for an archived
+ * session; every delete is bounded so one stuck file cannot block teardown.
+ */
+async function purgeSessionCaptures(service, sessionId) {
+  let rows = [];
+  try { rows = service.store.listCapturesOfSession(sessionId); } catch { rows = []; }
+  const removed = [];
+  for (const row of rows) {
+    const timeout = new Promise((resolve) => setTimeout(() => resolve('timeout'), 5000));
+    const attempt = service.deleteCapture(row.id).then(() => 'ok').catch((err) => (err && err.code) || 'error');
+    const outcome = await Promise.race([attempt, timeout]);
+    if (outcome === 'ok') removed.push(row.id);
+    else console.warn('serial-trigger: held back capture of an archived conversation', row.id, outcome);
+  }
+  forgetCallsOfSession(sessionId);
+  return removed;
+}
+
 function mountLifecycle(ctx, service) {
+  // Archiving a conversation removes the recordings it produced; app shutdown
+  // must never do that, so a teardown flag keeps the purge off.
+  let shuttingDown = false;
+  if (typeof ctx.on === 'function') {
+    try {
+      ctx.on('session/event', (session, event) => {
+        const sessionId = session && (session.id || (session.header && session.header.id));
+        if (!sessionId || !event) return;
+        const data = event.data || {};
+        if (event.type === 'tool/call' && data.callId) rememberCall(data.callId, sessionId);
+        else if (event.type === 'tool/ptc-dispatch') {
+          if (data.callId) rememberCall(data.callId, sessionId);
+          if (data.subCallId) rememberCall(data.subCallId, sessionId);
+        }
+      }, { global: true });
+    } catch (err) {
+      console.warn('serial-trigger: cannot subscribe to session/event; tool calls keep an unknown owner', err);
+    }
+  }
   if (typeof ctx.on === 'function') {
     try {
       ctx.on('session/disposed', (session) => {
@@ -88,9 +127,20 @@ function mountLifecycle(ctx, service) {
           }
         }
         service.stopRunsOwnedBy([...ids], 'session-disposed').catch(() => {});
-        service.closeOwnedBy([...ids], 'session-disposed').catch((err) => {
-          console.warn('serial-trigger: releasing ports for a disposed session failed', err);
-        });
+        const sessionId = session && session.id ? String(session.id) : '';
+        if (sessionId) ids.add(sessionId);
+        service.closeOwnedBy([...ids], 'session-disposed')
+          .then(async () => {
+            if (shuttingDown || !sessionId) return [];
+            // Let a shutdown tear the process down first: archiving is a user
+            // action, quitting must never delete a conversation's recordings.
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            if (shuttingDown) return [];
+            return purgeSessionCaptures(service, sessionId);
+          })
+          .catch((err) => {
+            console.warn('serial-trigger: releasing ports for a disposed session failed', err);
+          });
       }, { global: true });
     } catch (err) {
       console.warn('serial-trigger: cannot subscribe to session/disposed; ports may outlive sessions', err);
@@ -105,7 +155,7 @@ function mountLifecycle(ctx, service) {
   // event is the supported teardown hook.
   if (typeof ctx.on === 'function') {
     try {
-      ctx.on('dispose', () => { service.dispose().catch(() => {}); });
+      ctx.on('dispose', () => { shuttingDown = true; service.dispose().catch(() => {}); });
     } catch (err) {
       console.warn('serial-trigger: cannot register the dispose hook', err);
     }

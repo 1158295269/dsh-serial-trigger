@@ -6,6 +6,7 @@
  * a retry can help) so a failed call is still actionable.
  */
 import { SerialError } from './errors.mjs';
+import { sessionOfCall } from './identity.mjs';
 
 const ok = (data) => ({ ok: true, data });
 
@@ -38,6 +39,10 @@ function badArg(message) {
  * task does not suddenly look like a stranger to its own port.
  */
 function ownerOf(exec) {
+  // The PTC runtime hands nested bindings no agent/session, but the host told us
+  // which conversation issued the outer tool call (src/identity.mjs).
+  const fromCall = exec && sessionOfCall(exec.callId);
+  if (fromCall) return { kind: 'session', id: fromCall };
   let cur = exec;
   let guard = 0;
   while (cur && cur.parent && guard < 8) {
@@ -89,7 +94,10 @@ export function createTools(service) {
         if (!args || !args.port) return badArg('port is required');
         // Model opens always take over (SPEC 23.5). The owner travels with the
         // call so the panel can tell a live agent holder from a stale session.
-        try { return ok(await service.open({ ...args, owner: ownerOf(exec), autoTakeover: true })); } catch (e) { return fail(e); }
+        const owner = ownerOf(exec);
+        // A session-owned capture is what archival cleanup deletes later.
+        const sessionId = owner.kind === 'session' ? owner.id : (args.sessionId || '');
+        try { return ok(await service.open({ ...args, sessionId, owner, autoTakeover: true })); } catch (e) { return fail(e); }
       },
     },
     {
