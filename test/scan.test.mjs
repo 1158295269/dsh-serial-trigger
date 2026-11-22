@@ -37,6 +37,20 @@ export function createScanner() {
 }
 `;
 
+const SCRIPT_ONE = String.raw`
+export function createScanner() {
+  return {
+    record(rec) {
+      if (rec.dir !== 'rx') return null
+      return { anchor: { dir: 'rx', offset: rec.offset, length: 2 }, t: rec.t, kind: 'note', severity: 'info', label: 'one-rx' }
+    },
+    finish() {
+      return { anchor: { dir: 'rx', offset: 0, length: 1 }, t: 0, kind: 'note', severity: 'info', label: 'finish-one' }
+    },
+  }
+}
+`;
+
 async function harness() {
   const root = await mkdtemp(join(tmpdir(), 'scan-t-'));
   const store = await Store.open({ root });
@@ -147,4 +161,18 @@ test('S8 an aborted scan stops feeding and reports E_SCAN_CANCELLED', async (t) 
   setTimeout(() => ac.abort(), 200);
   await assert.rejects(pending, (err) => err.code === 'E_SCAN_CANCELLED');
   assert.ok(Date.now() - started < 5000, 'abort must not wait for the 30s timeout');
+});
+
+// A scanner is free to return one mark object instead of an array; the sandbox
+// used to iterate it and fail with "marks is not iterable".
+test('S9 a scanner may return a single mark object', async (t) => {
+  const h = await harness();
+  t.after(h.cleanup);
+  const script = join(h.root, 'one.mjs');
+  await writeFile(script, SCRIPT_ONE, 'utf8');
+  const res = await h.service.scan(h.captureId, { script });
+  assert.ok(res.marks >= 2, 'one mark per rx record plus the finish mark');
+  const found = await h.service.marks(h.captureId, {});
+  assert.ok(found.marks.some((m) => m.label === 'one-rx'));
+  assert.ok(found.marks.some((m) => m.label === 'finish-one'));
 });

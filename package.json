@@ -1,6 +1,6 @@
 {
   "name": "dsh-serial-trigger",
-  "version": "0.3.6",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "description": "DSH serial assistant: lossless capture, pub/sub byte stream, reverse lookup, trigger-ready.",

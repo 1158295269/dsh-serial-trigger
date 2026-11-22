@@ -36,13 +36,15 @@ async function handle(msg) {
     const marks = scanner.record({
       t: msg.rec.t, monoUs: msg.rec.monoUs, dir: msg.rec.dir, offset: msg.rec.offset, data,
     });
-    if (marks) for (const mark of marks) out({ type: 'mark', mark });
+    // A scanner may return one mark or an array; iterating a plain object used
+    // to throw "marks is not iterable" and fail the whole scan.
+    if (marks) for (const mark of Array.isArray(marks) ? marks : [marks]) out({ type: 'mark', mark });
     return;
   }
   if (msg.type === 'end') {
     if (scanner && typeof scanner.finish === 'function') {
       const marks = scanner.finish();
-      if (marks) for (const mark of marks) out({ type: 'mark', mark });
+      if (marks) for (const mark of Array.isArray(marks) ? marks : [marks]) out({ type: 'mark', mark });
     }
     out({ type: 'done' });
     process.exit(0);

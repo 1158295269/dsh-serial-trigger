@@ -84,12 +84,15 @@ export class Machine {
     this.mode = opts.simulated ? 'simulated' : 'executed';
     this.name = def.name || 'scenario';
     this.state = def.initial;
-    this.enteredAt = 0;
+    // simulate() anchors the clock at the first recorded line; a machine that
+    // starts at 0 would fire the initial state's after timer on the first line.
+    const startAt = Number.isFinite(Number(opts.startAt)) ? Number(opts.startAt) : 0;
+    this.enteredAt = startAt;
     this.pending = null;      // { match, deadline, goto, elseTo, sendText, waitMs, attempt, maxAttempts, onTimeout }
     this.stopped = false;
     this.trace = [];
     this.actions = [];        // side effects the runtime must perform
-    this._armAfter(0);
+    this._armAfter(startAt);
   }
 
   _stateDef() { return this.def.states[this.state] || {}; }
@@ -240,10 +243,10 @@ export class Machine {
  * No I/O, no port — this is how a scenario is proven before touching hardware.
  */
 export function simulate(def, lines, opts = {}) {
-  const machine = new Machine(def, { simulated: true });
+  const startAt = lines.length ? Number(lines[0].t) || 0 : Date.now();
+  const machine = new Machine(def, { simulated: true, startAt });
   const marks = [];
   const sends = [];
-  const startAt = lines.length ? lines[0].t || 0 : Date.now();
   for (const line of lines) {
     const now = line.t || startAt;
     for (const t of machine.tick(now)) { /* trace already recorded */ }
@@ -261,7 +264,10 @@ export function simulate(def, lines, opts = {}) {
       if (action.type === 'mark') marks.push({ at: now, label: action.label, severity: action.severity, ...(action.extra === undefined ? {} : { extra: action.extra }) });
     }
   }
-  const endAt = startAt + Math.max(0, Number(opts.tailMs) || 0);
+  // tailMs extends past the LAST recorded line, not the first: "what happens
+  // after the recording ended" is the point of the knob.
+  const lastT = lines.length ? Number(lines[lines.length - 1].t) || startAt : startAt;
+  const endAt = lastT + Math.max(0, Number(opts.tailMs) || 0);
   machine.tick(endAt);
   for (const action of machine.drainActions()) {
     if (action.type === 'mark') marks.push({ at: endAt, label: action.label, severity: action.severity });

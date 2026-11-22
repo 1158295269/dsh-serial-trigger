@@ -600,7 +600,7 @@ export class SerialService {
     if (!inside) {
       throw new SerialError('E_SCENARIO_OUTSIDE_WORKSPACE', 'scenario is outside the workspace: ' + abs, {
         hint: 'Scenarios must live under a configured workspace root.',
-        fix: ['move the scenario into the workspace', 'serial_config({set:{scanRoots:[...]}})'],
+        fix: ['move the scenario under ' + roots[0], 'or pass the scenario as an inline object'],
       });
     }
     if (!abs.toLowerCase().endsWith('.json')) {

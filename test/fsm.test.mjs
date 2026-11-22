@@ -90,3 +90,34 @@ test('F7 simulate walks a recording without touching a port', () => {
   assert.ok(out.trace.length >= 0);
   assert.equal(out.state, 'idle', 'after the 5s timer nobody connected, so it returns to idle');
 });
+
+// simulate() used to start the machine at t=0 and extend tailMs from the FIRST
+// line: the initial state's after timer fired on the first record, and tailMs
+// could not reach past the end of the recording.
+test('F8 simulate anchors the clock at the first line and tailMs past the last', () => {
+  const quiet = {
+    initial: 'quiet',
+    states: {
+      quiet: { on: {}, after: { ms: 1000, goto: 'late', mark: 'quiet over' } },
+      late: { on: {} },
+    },
+  };
+  const lines = [{ t: 5000, text: 'HB 1' }, { t: 5100, text: 'HB 2' }];
+  const noTail = simulate(quiet, lines, { tailMs: 0 });
+  assert.equal(noTail.state, 'quiet', 'the initial after timer must not fire at the first line');
+  assert.ok(!noTail.trace.some((e) => e.via === 'after'));
+
+  const withTail = simulate(quiet, lines, { tailMs: 2000 });
+  assert.equal(withTail.state, 'late', 'tailMs advances past the last line');
+  assert.ok(withTail.trace.some((e) => e.via === 'after'));
+  assert.ok(withTail.marks.some((m) => m.label === 'quiet over'));
+
+  // tailMs is measured from the last line, not the first.
+  const longWait = {
+    initial: 'quiet',
+    states: { quiet: { on: {}, after: { ms: 10000, goto: 'late' } }, late: { on: {} } },
+  };
+  const spread = [{ t: 5000, text: 'A' }, { t: 9000, text: 'B' }];
+  assert.equal(simulate(longWait, spread, { tailMs: 5000 }).state, 'quiet', '9000+5000 < 15000');
+  assert.equal(simulate(longWait, spread, { tailMs: 6000 }).state, 'late', '9000+6000 crosses 15000');
+});

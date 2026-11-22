@@ -1,11 +1,11 @@
-# 交接：串口插件 v0.3.6
+# 交接：串口插件 v0.3.7
 
 仓库 `D:\文档\杂项\dsh-serial-trigger`，分支 `main`。
 先读 `SKILL.md`（模型怎么用）、`SPEC.md` §11.1（谁录的谁来清）、§22.6（超时与失败降级）、§23.5（单写者）。
 
 ## 现在到哪了
 
-- 单测 **163 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
+- 单测 **165 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
 - 真机冒烟通过（2026-11-22，COM8，板子空闲）：`bin/shell-check.mjs` 7/7（字节透明 sha256 一致、
   seq 无洞、句柄 2→2、索引 11 行）、`bin/rules-check.mjs` 12/12（扫描/标记/字节引用/越界与超时守卫）
 - 工具 **18 个**（含 `serial_cleanup`）
@@ -37,6 +37,18 @@
     删除只由归档触发（L5 测试改写）
   - 附带：`trace.via` 行匹配曾输出 `line:line:/re/`，已去重；SKILL 补了工作区根、grep 返回结构、
     seq 语义（字节偏移）、`next[]` 对象结构、发送行尾/回显、close 可能慢、simulate 不能注入 event 等 11 处说明
+
+- v0.3.7（第二轮盲跑修复）：
+  - 盲跑第 2 遍（独立 subagent，只读 SKILL.md）：L1/L2/L3 全部通过（98 次调用 / 15 分 20 秒），
+    接口层不再出现 invalid output；暴露 2 个代码缺陷 + 4 个说明书缺口：
+  - **扫描脚本返回单个 mark 对象即 E_SCAN_FAILED**（marks is not iterable）：sandbox-child 迭代了对象；
+    已改为数组或单对象都接受，并补 S9 单测
+  - **simulate 时钟错误**：机器从 t=0 起算、tailMs 从第一条录制算，导致 initial 态的 after 在首行就触发、
+    tailMs 无法覆盖录制结束之后；已锚定第一条录制、tailMs 改为从最后一条起算，补 F8 单测
+  - 说明书补：E_SCAN_FAILED、工作区根的两种错误（含相对路径按宿主 cwd 解析）、after 自环会重置计时、
+    tailMs 语义、scan 返回 marks 是数量、bytes 越过文件尾会截断
+  - 错误 hint 改进：E_NO_SUCH_SCRIPT / E_SCRIPT_OUTSIDE_WORKSPACE / E_SCENARIO_OUTSIDE_WORKSPACE
+    现在直接给出允许根目录（不再提不存在的 serial_config）
 
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24
