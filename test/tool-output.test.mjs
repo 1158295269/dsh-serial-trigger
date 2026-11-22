@@ -159,4 +159,10 @@ test('O5 marks and bytes results are lossless JSON', async (t) => {
   assert.equal(bytes.ok, true);
   assertLosslessJson(bytes.data, 'bytes.data');
   assert.match(bytes.data.body, /48 42 20/);
+  assert.equal(bytes.data.truncated, false, 'a full-length read is not truncated');
+  // Range crosses the end of the capture: fewer bytes than requested.
+  const short = await h.byName.serial_bytes.execute({ captureId: closed.captureId, dir: 'rx', offset: 12, length: 16, format: 'text' }, {});
+  assert.equal(short.ok, true);
+  assert.equal(short.data.truncated, true);
+  assert.ok(short.data.length < 16);
 });

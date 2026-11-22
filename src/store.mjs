@@ -440,7 +440,9 @@ export class Store {
       have += slice.length;
       return have >= want ? false : undefined;
     }, { dirs: [dir] });
-    return { dir, offset: actualStart === null ? start : actualStart, length: have, data: Buffer.concat(parts), truncated: have >= want };
+    // truncated means "the file ended before the requested range was filled";
+    // a full-length read is not truncated even when the file has more bytes.
+    return { dir, offset: actualStart === null ? start : actualStart, length: have, data: Buffer.concat(parts), truncated: have < want };
   }
 
   /** Coarse (time, offset) timeline used to turn a time window into a byte window. */

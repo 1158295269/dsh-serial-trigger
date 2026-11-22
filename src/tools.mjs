@@ -275,7 +275,7 @@ export function createTools(service) {
     },
     {
       name: 'serial_bytes',
-      description: '按引用取原始字节。hex 是真相，text 只是方便；单次最多 8 KB，超出会标 truncated。',
+      description: '按引用取原始字节。hex 是真相，text 只是方便；单次最多 8 KB。请求越过文件尾时返回实际字节并置 truncated=true。',
       parameters: {
         type: 'object',
         properties: {
