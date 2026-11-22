@@ -135,3 +135,16 @@ test('S7 a runaway script is killed', async (t) => {
     (err) => err.code === 'E_SCAN_TIMEOUT',
   );
 });
+
+test('S8 an aborted scan stops feeding and reports E_SCAN_CANCELLED', async (t) => {
+  const h = await harness();
+  t.after(h.cleanup);
+  const loop = join(h.root, 'loop-abort.mjs');
+  await writeFile(loop, 'export function createScanner(){ return { record(){ for(;;){} } } }', 'utf8');
+  const ac = new AbortController();
+  const started = Date.now();
+  const pending = h.service.scan(h.captureId, { script: loop, timeoutMs: 30000, signal: ac.signal });
+  setTimeout(() => ac.abort(), 200);
+  await assert.rejects(pending, (err) => err.code === 'E_SCAN_CANCELLED');
+  assert.ok(Date.now() - started < 5000, 'abort must not wait for the 30s timeout');
+});

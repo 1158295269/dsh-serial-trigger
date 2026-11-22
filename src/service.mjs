@@ -439,6 +439,15 @@ export class SerialService {
     let scanned = 0;
     try {
       await this.store.scanCapture(captureId, async (rec) => {
+        // Stop feeding as soon as the caller aborts, instead of walking the rest
+        // of the capture into a dead pipe.
+        if (signal && signal.aborted) {
+          throw new SerialError('E_SCAN_CANCELLED', 'scan cancelled by the caller', {
+            hint: 'The tool call was aborted; nothing was written.',
+            fix: ['serial_scan again if you still need it'],
+            retryable: true,
+          });
+        }
         scanned += rec.length;
         await run.push(rec);
       });

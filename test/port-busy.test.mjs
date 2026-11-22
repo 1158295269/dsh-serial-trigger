@@ -88,3 +88,26 @@ test('B4 the model path carries its own identity', async (t) => {
   const ownClose = await byName.serial_close.execute({ portId: opened.data.portId }, exec);
   assert.equal(ownClose.ok, true);
 });
+
+test('B5 owner identity accepts the shapes the host actually passes', async (t) => {
+  const { service } = await harness(t);
+  const { createTools } = await import('../src/tools.mjs');
+  const byName = Object.fromEntries(createTools(service).map((x) => [x.name, x]));
+  const ownerOfPort = (portName) => service.listPorts().find((p) => p.port === portName)?.owner;
+
+  // the host hands the Agent instance, not an id
+  await byName.serial_open.execute({ port: 'MOCK:O1' }, { agent: { id: 'agent-obj' } });
+  assert.deepEqual(ownerOfPort('MOCK:O1'), { kind: 'agent', id: 'agent-obj' });
+
+  // a bare string still works (tests and older call sites)
+  await byName.serial_open.execute({ port: 'MOCK:O2' }, { agent: 'agent-str' });
+  assert.deepEqual(ownerOfPort('MOCK:O2'), { kind: 'agent', id: 'agent-str' });
+
+  // a session id is a better identity than 'unknown' when that is all we get
+  await byName.serial_open.execute({ port: 'MOCK:O3' }, { sessionId: 'sess-9' });
+  assert.deepEqual(ownerOfPort('MOCK:O3'), { kind: 'session', id: 'sess-9' });
+
+  // nested PTC bindings may carry nothing at all; that must not throw
+  await byName.serial_open.execute({ port: 'MOCK:O4' }, {});
+  assert.deepEqual(ownerOfPort('MOCK:O4'), { kind: 'agent', id: 'unknown' });
+});

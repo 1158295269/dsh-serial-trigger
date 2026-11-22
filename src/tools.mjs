@@ -45,8 +45,19 @@ function ownerOf(exec) {
     cur = cur.parent;
     guard += 1;
   }
-  const id = cur && cur.agent !== undefined ? String(cur.agent) : 'unknown';
-  return { kind: 'agent', id };
+  const agent = cur && cur.agent;
+  // The host normally hands the Agent instance itself, not an id; a bare string
+  // still shows up in tests and older call sites.
+  if (typeof agent === 'string' && agent) return { kind: 'agent', id: agent };
+  if (agent && typeof agent === 'object') {
+    const id = agent.id ?? agent.agentId ?? agent.sessionId;
+    if (id !== undefined && id !== null && id !== '') return { kind: 'agent', id: String(id) };
+  }
+  const sessionId = cur && (cur.sessionId ?? (cur.session && cur.session.id));
+  if (sessionId) return { kind: 'session', id: String(sessionId) };
+  // Nested PTC bindings may carry neither: the identity is then unknown, and the
+  // single-writer rule degrades to last-writer-wins (SPEC 23.5 allows takeover).
+  return { kind: 'agent', id: 'unknown' };
 }
 
 export function createTools(service) {
@@ -225,10 +236,12 @@ export function createTools(service) {
         required: ['captureId', 'script'],
         additionalProperties: false,
       },
-      async execute(args) {
+      async execute(args, exec) {
         if (!args || !args.captureId) return badArg('captureId is required');
         if (!args.script) return badArg('script is required: pass the path of a .mjs scan script');
-        try { return ok(await service.scan(args.captureId, args)); } catch (e) { return fail(e); }
+        // Cancelling the tool call must kill the sandboxed scanner, not let it
+        // keep eating a dead pipe.
+        try { return ok(await service.scan(args.captureId, { ...args, signal: exec && exec.signal })); } catch (e) { return fail(e); }
       },
     },
     {

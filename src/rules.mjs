@@ -140,11 +140,37 @@ export class ScanRunner {
       child.on('error', (err) => { clearTimeout(timer); rej(err); });
     });
 
+    // A killed child (cancel or timeout) never drains stdin, so every write races
+    // the process close: an aborted scan must not hang on backpressure.
+    const writeError = () => {
+      if (aborted) {
+        return new SerialError('E_SCAN_CANCELLED', 'scan cancelled by the caller', {
+          hint: 'The tool call was aborted; nothing was written.',
+          fix: ['serial_scan again if you still need it'],
+          retryable: true,
+        });
+      }
+      if (timedOut) {
+        return new SerialError('E_SCAN_TIMEOUT', 'scan exceeded ' + timeoutMs + 'ms and was killed', {
+          hint: 'The script is stuck in a loop or scanning a huge buffer. Raise timeoutMs or fix the loop.',
+          fix: ['retry with a larger timeoutMs', 'inspect the script for an unbounded loop'],
+          retryable: true,
+        });
+      }
+      return new SerialError('E_SCAN_FAILED', 'scan script closed before the capture was fully fed', {
+        hint: 'The sandbox exited early; check the script for a crash.',
+        fix: ['fix the script', 'retry serial_scan'],
+        retryable: true,
+      });
+    };
     const write = (obj) => new Promise((res, rej) => {
       const line = JSON.stringify(obj) + '\n';
-      if (child.stdin.write(line)) return res();
-      child.stdin.once('drain', res);
-      child.stdin.once('error', rej);
+      const onClose = () => rej(writeError());
+      child.once('close', onClose);
+      const settle = () => child.removeListener('close', onClose);
+      if (child.stdin.write(line)) { settle(); return res(); }
+      child.stdin.once('drain', () => { settle(); res(); });
+      child.stdin.once('error', (err) => { settle(); rej(err); });
     });
 
     await write({ type: 'script', source, ctx });
