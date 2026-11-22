@@ -78,6 +78,16 @@
 4. 稳定性：同一提示词连跑 2–3 次（真机单写者，必须串行），看调用次数与缺陷数是否收敛；
 5. 只改可归因到 SKILL 的句子；代码 bug 单独修并加回归测试，**不要用说明书去掩盖 bug**。
 
+**让 agent 能用 `skill` 工具加载**（v0.3.9 起已在本机做好）：DSH 的 skill 文件系统 provider 会扫描
+`$DSH_HOME/skills/<name>/SKILL.md`（watch 开着，热生效）。本机已建软链：
+
+```
+C:\Users\Administrator\.dsh\skills\dsh-serial-trigger\SKILL.md -> D:\文档\杂项\dsh-serial-trigger\SKILL.md
+```
+
+注册后 `skill({name:'dsh-serial-trigger'})` 直接返回全文（provider: filesystem）。换机器/仓库路径变了要重建软链；
+也可以改 profile 里 `dsh-skill-filesystem` 的 `customSkillDirs`，但那会连仓库里其它 .md 一起扫，不推荐。
+
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24
 
@@ -94,8 +104,9 @@
 
 ## 下次接手先做
 
-1. **让 v0.3.6 生效**：改动只在新进程里加载，需重启宿主（或可先试 profile 配置 touch 触发重载）。
-   重启后跑 2 次"只读 SKILL.md 盲跑"（同 turn 的 trial-1 提示词）验证稳定性；
+1. **重启一次宿主**：v0.3.9 已通过 profile 触发出热重载生效（工具边界实测过），但热重载会留重复 HTTP 路由、
+   面板接口可能 500；重启即清干净。之后 `skill({name:'dsh-serial-trigger'})` 可直接加载 SKILL；
+2. 想复核稳定性就按上面的「SKILL 验收协议」再跑 1 轮盲跑（正常应 40 次调用内、0 代码缺陷）；
 2. 没有排期项；v0.4 可选（SPEC §24），动手前先确认真要投入；
 2. 动面板用 Windows-MCP + 区域截图（整屏 Snapshot 30–75 秒，太慢）。
 ## 约束
