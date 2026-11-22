@@ -292,7 +292,8 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 | `serial_marks` | `{captureId,rule?,severity?,include?}` | 读故障点，只返回引用（v0.2） |
 | `serial_bytes` | `{captureId,dir,offset,length,format?}` | 按引用取字节（v0.2） |
 
-状态机接口 `serial_fsm_*` 留 v0.3，触发器 `serial_trigger` 留 v0.4。
+状态机接口 `serial_fsm_*` 已随 v0.3 落地。原计划的通用触发器 `serial_trigger` **取消**：
+v0.4 改为范围更窄的「FSM 故障态唤醒对话」（见 §24），不再做独立的行级规则/编排引擎。
 扫描脚本由工作区管理：插件不保存、不注册、不规定放在哪。
 
 ---
@@ -310,7 +311,7 @@ E_DATA_ROOT_INVALID / E_CONFIG_INVALID`
 | M7 ✅ | UI（面板 + 路由） | **已完成**：日志 / Hex / 统计、搜索、只读历史、导出四格式 |
 | M8 | 规则与故障点（v0.2） | 见第 21 节 |
 | M9 | 状态机中间件（v0.3） | 见第 22 节 |
-| M10 | 故障注入 + 黄金轨迹（v0.4） | 待定 |
+| M10 | 故障注入 + 黄金轨迹 | 待定；已移出 v0.4，归测试基建 backlog |
 
 ---
 
@@ -668,3 +669,56 @@ COM8 实测：心跳驱动转移、发送 PING 后等待 `ECHO PING` 才进入�
 | 面板（状态机卡片） | 只读态不渲染事件按钮：机器属于端口持有者，观众只能看 |
 
 对模型仍然没有 `E_PORT_BUSY`；该错误码只留给直接调库或面板未声明 `takeover` 的路径。
+
+---
+
+## 24. v0.4 规划（可做可不做）：FSM 故障态唤醒对话
+
+**定档**：v0.3 线功能定档于 v0.3.5（此后只修缺陷）。v0.4 不再是"通用触发器编排"，
+而是一个可选的窄扩展。
+
+### 24.1 定义
+
+> FSM 的状态触发模型的对话，作为故障状态处理的一环。
+
+- **触发源**：状态机进入场景里声明的状态（故障态 / 停机态 / 自定义状态）；
+- **动作**：把一条结构化消息投递给「该 FSM 所属会话」，并唤醒一轮对话，由模型决定下一步；
+- **边界**：插件只负责"报告 + 唤醒"，真正的处理（读 marks/bytes、重发、改场景、重开端口）
+  仍由模型用现有工具完成；不新增任何自动发送能力。
+
+### 24.2 范围
+
+- 场景 JSON 增加状态级唤醒声明（字段名待定，例如 `onEnter: { wake: true, note }`）；
+- 唤醒消息包含：端口与 runId、进入的状态、最近若干条转移轨迹、超时/停机产生的 mark
+  （severity、label、`{dir,offset,length}` 引用）、下一步可用工具的提示；
+- 去重与预算：同一 `(runId, state)` 只唤醒一次；每次 run 有唤醒次数上限（默认 1–3），
+  超限只记日志/落 mark；端口被接管、关闭或会话归档时不唤醒；
+- 模型正忙时排队（`agent.followup` 的 next-turn 语义），不打断当前步骤。
+
+### 24.3 不做（明确排除）
+
+- 通用触发器引擎：行级规则、事件源→动作编排、`serial.trigger` 的发布、
+  `captures.triggers` 计数填充、`KIND.TRIGGER`/`FLAG.TRIGGER_MARK` 的使用——这些是 v0.1 草案的
+  遗留接口，保留为"预留未用"，不实现；
+- 触发器编辑器（v0.1 起就不做）；
+- M10 故障注入 + 黄金轨迹：移出 v0.4，归测试基建 backlog；
+- 断线重连、自动保留策略：各自 backlog，不搭 v0.4。
+
+### 24.4 可行性（已核对宿主 SDK 与现有代码）
+
+- 宿主有 `agents` 服务：`ctx.agents.get(sessionId)` 取在线 agent；agent 具备
+  `status`（idle/running）、`followup(message)`（进 next-turn 队列并唤醒一轮）、`steer`、
+  `whenIdle`、`cancel`；
+- 先例：`@deepseek-ai/dsh-goal-round-driver` 就是 `createUserMessage` + `agent.followup(message)`
+  自动开新一轮，说明"插件唤醒对话"是宿主支持的用法；
+- 会话身份现成：v0.3.4 起端口归属会话（callId → sessionId，`src/identity.mjs`）；
+- FSM 现成：状态、转移轨迹、`onTimeout` 的 mark/stop 都有；缺一个"状态进入"回调钩子；
+- 实现时需验证：插件可选注入 `agents`（cordis `ctx.inject(deps, cb)`）；消息信封要与宿主
+  `createUserMessage` 一致（`{id, role:'user', content, source}`），`source.kind` 取值待定。
+
+### 24.5 验收
+
+- 单测（fake agents 服务）：故障态进入 → `followup` 恰好一次、消息含 mark 引用与轨迹；
+  同一状态重复进入不重复唤醒；超出预算不再唤醒；端口关闭/会话缺失时静默放弃；
+- 真机：COM8 上用超时场景让 FSM 进故障态，确认对话被唤醒且能直接 `serial_marks` 取到证据；
+- 文档：实现完成后再补 SKILL.md 一节（场景字段 + 唤醒语义），**未实现前不写进 SKILL**。
