@@ -95,9 +95,10 @@ export function createTools(service) {
         // Model opens always take over (SPEC 23.5). The owner travels with the
         // call so the panel can tell a live agent holder from a stale session.
         const owner = ownerOf(exec);
-        // A session-owned capture is what archival cleanup deletes later.
+        // A session-owned capture is what archival cleanup deletes later; origin
+        // records that a *tool* opened it (the panel marks its own recordings).
         const sessionId = owner.kind === 'session' ? owner.id : (args.sessionId || '');
-        try { return ok(await service.open({ ...args, sessionId, owner, autoTakeover: true })); } catch (e) { return fail(e); }
+        try { return ok(await service.open({ ...args, sessionId, owner, origin: 'agent', autoTakeover: true })); } catch (e) { return fail(e); }
       },
     },
     {

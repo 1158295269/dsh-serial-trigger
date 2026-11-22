@@ -85,6 +85,7 @@ export function createApi(service, settings = {}) {
         port: body.port, baudRate: Number(body.baudRate) || 115200,
         project: body.project || 'default', conversation: body.conversation || 'session', sessionId: body.sessionId || '',
         takeover: body.takeover === true,
+        origin: 'human',
         owner: body.sessionId ? { kind: 'session', id: String(body.sessionId) } : { kind: 'session', id: 'panel' },
       });
       return ok({ ok: true, ...res });

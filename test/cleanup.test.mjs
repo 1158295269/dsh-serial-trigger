@@ -16,8 +16,9 @@ async function harness(t) {
   return { root, store, service, byName };
 }
 
-async function makeCapture(service, port, text, owner = { kind: 'agent', id: 'a1' }) {
-  const opened = await service.open({ port, project: 'clean', conversation: 'c', owner });
+async function makeCapture(service, port, text, origin = 'agent') {
+  const owner = origin === 'agent' ? { kind: 'agent', id: 'a1' } : { kind: 'session', id: 'panel-s' };
+  const opened = await service.open({ port, project: 'clean', conversation: 'c', owner, origin });
   service.feed(opened.portId, Buffer.from(text));
   await new Promise((r) => setTimeout(r, 30));
   return await service.close(opened.portId);
@@ -49,7 +50,7 @@ test('CL2 the tool refuses to delete anything, even with a plan id', async (t) =
 test('CL3 human recordings are outside the agent retention scope', async (t) => {
   const h = await harness(t);
   const mine = await makeCapture(h.service, 'MOCK:A1', 'agent\n');
-  const human = await makeCapture(h.service, 'MOCK:H1', 'human\n', { kind: 'session', id: 'panel-s' });
+  const human = await makeCapture(h.service, 'MOCK:H1', 'human\n', 'human');
 
   const plan = await h.byName.serial_cleanup.execute({ olderThanDays: 0, keepLast: 0 });
   assert.equal(plan.data.scope, 'agent');
@@ -62,7 +63,7 @@ test('CL3 human recordings are outside the agent retention scope', async (t) => 
 test('CL4 includeHuman is an explicit inspection switch', async (t) => {
   const h = await harness(t);
   await makeCapture(h.service, 'MOCK:A2', 'agent\n');
-  await makeCapture(h.service, 'MOCK:H2', 'human\n', { kind: 'session', id: 'panel-s' });
+  await makeCapture(h.service, 'MOCK:H2', 'human\n', 'human');
   const plan = await h.byName.serial_cleanup.execute({ includeHuman: true });
   assert.equal(plan.data.scope, 'all');
   assert.equal(plan.data.count, 2);

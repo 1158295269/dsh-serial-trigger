@@ -76,6 +76,9 @@ test('B4 the model path carries its own identity', async (t) => {
   assert.equal(opened.ok, true);
   const listed = service.listPorts().find((p) => p.portId === opened.data.portId);
   assert.deepEqual(listed.owner, { kind: 'agent', id: 'agent-7' });
+  // A tool-created capture is the agent's: the panel's own recordings stay human.
+  const row = service.store.listCaptures({}).find((c) => c.id === opened.data.captureId);
+  assert.equal(row.origin, 'agent');
 
   const foreign = await byName.serial_send.execute({ portId: opened.data.portId, text: 'x' }, { agent: 'agent-8' });
   assert.equal(foreign.ok, false);

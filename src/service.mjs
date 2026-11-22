@@ -158,7 +158,7 @@ export class SerialService {
 
     const cap = opts.record === false
       ? { captureId: null, path: null, writer: null }
-      : await this.store.openCapture({ project, conversation, sessionId, port, baud: baudRate, origin: owner.kind === 'agent' ? 'agent' : 'human' });
+      : await this.store.openCapture({ project, conversation, sessionId, port, baud: baudRate, origin: opts.origin === 'agent' ? 'agent' : 'human' });
     const portId = nextPortId++;
     const rec = {
       id: portId, name: port, baud: baudRate, state: 'open',
