@@ -1,98 +1,192 @@
 # dsh-serial-trigger
 
-> DSH（DeepSeek Harness）串口助手插件：**无损录制** + 增量读取 + 字节级回查 + 工作区脚本故障点 + 实时状态机中间件。
+[简体中文](README.zh-CN.md) · [Changelog](CHANGELOG.md) · [Docs](docs/README.md) · MIT
 
-A DSH plugin for real serial work: lossless `.slog` capture with a SQLite index, incremental `tail`, byte-referenced scan marks from workspace-owned scripts, and a live FSM middleware so the model can plan while the script keeps millisecond timing. 18 model-facing tools plus a web panel. MIT licensed.
+A DSH (DeepSeek Harness) plugin for real serial work: **lossless capture**, incremental tail, byte-level reverse lookup, workspace scan scripts that emit byte-referenced marks, and a **live FSM middleware** — so the model plans while the script keeps millisecond timing. 18 model-facing tools, a per-conversation panel, MIT licensed.
 
-## 为什么做这个
+## Why
 
-模型的一轮思考要几秒到几十秒，而串口设备的时序窗口常常只有几十毫秒。让模型逐字节读串口既慢又不可复现。本插件把三件事分开：
+A model turn takes seconds; a UART timing window is often a few dozen milliseconds. Asking the model to read the port byte by byte is both slow and unreproducible. This plugin splits the job three ways:
 
-- **实时**：状态机（工作区 JSON 场景）负责收发、超时重试与降级；
-- **判定**：扫描脚本（工作区 ESM）事后在录制上找故障点，只产出字节引用；
-- **规划**：模型用 18 个工具开端口、抓证据、注入事件、读结论。
+| Layer | Owner | Responsibility |
+|---|---|---|
+| Real time | **FSM** (JSON scenario in your workspace) | send / expect / retry / fall back on timeout |
+| Judgement | **Scan scripts** (ESM in your workspace, re-runnable) | find fault points in a recording, emit byte references |
+| Planning | **The model** | open ports, gather evidence, inject events, read conclusions |
 
-所有字节都会落成 `.slog` 并进 SQLite 索引，现场可以用 `captureId` 反复回查。
+Every byte is written to a `.slog` container and indexed in SQLite, so a `captureId` can be re-examined as often as needed — after a context reset, next week, or on a colleague's machine.
 
-## 能力
+## Features
 
-- **端口与录制**：`serial_ports / open / tail / send / close`，一个端口一个写者；工具打开自动接管，面板只读跟随。
-- **回查**：`serial_captures / grep / export`，按工程、时间、关键词定位历史录制。
-- **故障点**：`serial_scan / marks / bytes`。脚本放在**你的仓库**里（`createScanner(ctx)`），沙箱执行（不能 import、20s 超时、可取消、最多 5000 条），mark 只存 `{dir, offset, length}` 引用。
-- **状态机**：`serial_fsm_simulate / start / event / wait / status / stop`。JSON 场景、`line:/regex/` 与 `event:<name>` 两种转换、`send` 必须声明 `expect + waitMs + goto`（不发盲包）、`onTimeout` 支持 retry/goto/mark/severity/stop、状态级 `after` 定时器、一端口一机器、可先对着录制离线 simulate。
-- **面板**：`client/client.js`（Web），实时流、统计、标记、只读/接管状态。
-- **归属与清理**：录制区分 `origin=agent|human`；模型工具**不能删除录制**（`serial_cleanup` 只读）；用户归档会话时其录制才被删除。
+- **Ports & capture** — `serial_ports / open / tail / send / close`. One writer per port; tool opens take over cleanly, the panel follows read-only.
+- **Reverse lookup** — `serial_captures / grep / export`. Find a past session by project, time or keyword; export to text / hex / csv without touching the source.
+- **Fault points** — `serial_scan / marks / bytes`. Scripts live in *your* repo (`createScanner(ctx)`); marks are `{dir, offset, length}` references only. Sandboxed: no imports, 20 s default timeout, cancellable, 5 000 marks max.
+- **Live FSM** — `serial_fsm_simulate / start / event / wait / status / stop`. `line:/regex/` and `event:<name>` transitions, `send` must declare `expect + waitMs + goto` (never fire blind), `onTimeout` (retry / goto / mark / severity / stop), state-level `after` timers, one machine per port, offline `simulate` against a recording before touching hardware.
+- **Panel** — a `串口` (Serial) tab inside the conversation: live terminal, RX/TX filter, search, line-ending switch, send box, statistics, history, marks, takeover state.
+- **Ownership & cleanup** — recordings are tagged `origin=agent|human`; the model **cannot delete** recordings (`serial_cleanup` is read-only); only archiving a conversation removes its recordings.
 
-## 安装（DSH）
+## Panel
 
-本包是 DSH 插件（bundle patch + web client），不依赖额外构建步骤。
+The panel is registered as a conversation-view tab (`串口`) beside `对话` and `轨迹`:
 
-1. 安装到 DSH profile（示例，具体以你的 profile 包管理器为准）：
+- **终端 (Terminal)** — live tail with auto-scroll, RX/TX/all filter, text search with match navigation, line-ending policy (`any / crlf / lf`), send box (text or hex), and a takeover banner when another holder owns the port.
+- **统计 (Stats)** — throughput, byte counts, line count, capture metadata.
+- **History** — list past captures of the workspace, open the decoded view, read marks, export.
+- **Marks** — scan results with byte refs; click through to the exact bytes.
+
+## Install
+
+Requirements: DSH desktop (tested on `0.2.1-rc.2`), Node.js ≥ 24, and an OS driver for your USB-serial adapter.
+
+1. Install into a DSH profile:
 
    ```bash
+   cd "$DSH_HOME/profiles/desktop"      # the profile that should load it
    pnpm add dsh-serial-trigger
+   # or, while developing:
+   pnpm add link:/path/to/dsh-serial-trigger
    ```
 
-   本地开发时可以 `link:` 指向工作副本。
+2. Restart DSH. The package declares `dsh.bundle.patch`, so the host mounts `serial-trigger` from the package and registers the browser panel automatically (`dsh.client`).
 
-2. 在 profile 的 `cordis.patch.yml` 里挂载（包内 `cordis.patch.yml` 是相对路径版，npm 安装后直接用包名）：
+3. Optional: override settings in the profile's `cordis.patch.yml` — the row merges into the bundle row with the same id:
 
    ```yaml
-   - insert:
-       - id: serial-trigger
-         name: 'dsh-serial-trigger'
+   - id: serial-trigger
      config:
        dataRoot: 'D:/serial-logs'
+       replayRoots:
+         - 'D:/device-logs'
    ```
 
-3. 重启 DSH。客户端插件按 `package.json` 的 `dsh.client` 声明自动注册。
+4. Verify: open a conversation in DSH and look for the `串口` tab, or ask the agent to run `serial_ports`.
 
-## 配置
+## Configuration
 
-| 字段 | 默认 | 说明 |
+| Key | Default | Meaning |
 |---|---|---|
-| `dataRoot` | `~/.dsh/serial-trigger/data` | 录制根目录（`.slog` + `index.db`） |
-| `replayRoots` | `[]` | 允许回放的文件目录白名单 |
-| `ringBytes` | 8 MiB | 内存字节环大小（tail/订阅的实时窗口） |
-| `archivePollMs` | 2000 | 归档列表轮询间隔（归档即清录制） |
-| `workspaceRoot` / `scanRoots` | 宿主进程工作目录 | 扫描脚本与 FSM 场景的允许根 |
-| `dshHome` | `$DSH_HOME` | 桌面端归档列表位置（`storages/workspace.json`） |
+| `dataRoot` | `~/.dsh/serial-trigger/data` | Recording root (`.slog` files + `index.db`) |
+| `replayRoots` | `[]` | Folders whose files may be replayed into a mock port |
+| `ringBytes` | `8 MiB` | In-memory byte ring used by `tail` and live subscribers |
+| `archivePollMs` | `2000` | How often the archived-session list is polled (archive deletes its recordings) |
+| `workspaceRoot` | host process cwd | Fallback root for scan scripts and FSM scenarios |
+| `scanRoots` | `[workspaceRoot]` | Explicit allow-list for scan scripts / scenarios |
+| `rulesRoot` | `<workspaceRoot>/.serial/rules` | Conventional location for rule scripts |
+| `dshHome` | `$DSH_HOME` | Where the desktop app keeps the archived-session list |
 
-## 快速上手
+## Quick start
 
-给模型用：加载 `SKILL.md`（或 DSH 的 `skill` 工具），按里面的四条工作流走。最小链路：
+Tool results always use one envelope: success `{ok:true, data:{…}}`, failure `{ok:false, error:{code, message, hint, fix[], retryable}}`.
 
 ```js
-serial_ports
-serial_open({ port: 'COM8', project: 'bringup' })   // → portId, captureId
-serial_tail({ portId, timeoutMs: 3000 })            // → 新行 + cursor
+serial_ports                                            // → ports[]
+serial_open({ port: 'COM8', project: 'bringup' })       // → { portId, captureId, path }
+serial_tail({ portId, timeoutMs: 3000 })                // → { lines[], cursor }
 serial_send({ portId, text: 'PING', append: 'lf' })
-serial_close({ portId })                            // 落盘 + 索引
+serial_close({ portId })                                // → { path, bytesRx, bytesTx, lines }
 ```
 
-给维护者：完整工具说明见 `SKILL.md`；设计/交接/测试计划文档不随发布包分发。
+Then find it again:
 
-## 开发
+```js
+serial_captures({ project: 'bringup', keyword: 'timeout' })
+serial_grep({ captureId, pattern: 'ASSERT', context: 3 })
+serial_export({ captureId, format: 'text' })
+```
+
+## Live FSM in one glance
+
+```json
+{
+  "name": "handshake",
+  "initial": "idle",
+  "states": {
+    "idle": {
+      "on": {
+        "event:start": {
+          "send": "PING\n",
+          "expect": "line:/PING/",
+          "waitMs": 800,
+          "goto": "linked",
+          "onTimeout": { "retry": 2, "retryDelayMs": 100, "goto": "recovering",
+                         "mark": "no echo", "severity": "warn" }
+        },
+        "line:/^READY/": { "goto": "ready" }
+      },
+      "after": { "ms": 5000, "goto": "recovering", "mark": "no output" }
+    },
+    "ready": { "on": {} },
+    "linked": { "on": {} },
+    "recovering": { "on": {} }
+  }
+}
+```
+
+`serial_fsm_simulate` proves the scenario against a recording (no port, no sends), `serial_fsm_start` runs it live, `serial_fsm_event` injects an event, `serial_fsm_wait` long-polls the next transition, `serial_fsm_stop` persists the marks. Full grammar: [docs/fsm.md](docs/fsm.md).
+
+## Scan scripts in one glance
+
+```js
+// hb-scan.mjs — must live under the plugin's workspace root (see docs)
+export function createScanner(ctx) {
+  let prevSeq = null;
+  return {
+    record({ t, dir, offset, data }) {
+      if (dir !== 'rx') return null;
+      const text = data.toString('latin1');
+      // ... parse lines, return one mark or an array of marks
+      return { anchor: { dir: 'rx', offset, length: data.length }, t, kind: 'state',
+               severity: 'info', label: 'HB ' + text.length + ' bytes' };
+    },
+    finish() { return null; },
+  };
+}
+```
+
+`serial_scan({ captureId, script }) → serial_marks({ captureId }) → serial_bytes({ captureId, dir, offset, length })`. Marks never carry text — only references. Full contract: [docs/scanning.md](docs/scanning.md).
+
+## Data, ownership & privacy
+
+- Recordings stay on the local machine under `dataRoot`; nothing is uploaded.
+- One writer per port. A tool `serial_open` takes the port over cleanly; a non-owner can only read via `serial_tail` (writes/close return `E_NOT_OWNER`).
+- The model cannot delete recordings. Only a human archiving a conversation deletes that conversation's recordings; recordings opened by a human in the panel are never auto-deleted.
+- Scan scripts and FSM scenarios are ordinary files in your workspace, versioned by your git. The sandbox prevents imports and restricts file reads, but treat them as your own code.
+
+## Compatibility
+
+- DSH desktop: tested on `0.2.1-rc.2` (`engines.dsh`).
+- Node.js: ≥ 24.
+- OS: Windows 10/11 verified against real hardware; `serialport` 13 also supports macOS/Linux (not exercised by this repo's tests). Mock ports (`MOCK:<name>`) need no hardware.
+
+## Development
 
 ```bash
-npm test                              # 170 项单测（约 29s）
-node bin/shell-check.mjs COM8         # 真机字节透明/句柄/索引冒烟（7 项）
-node bin/rules-check.mjs COM8         # 扫描/标记/字节引用/沙箱守卫（12 项）
-node bench/lag.mjs 50                 # 吞吐/延迟基准
+npm test                              # 170 unit tests (~30 s)
+node bin/shell-check.mjs COM8         # real-device gate: byte transparency, handles, index (7 checks)
+node bin/rules-check.mjs COM8         # scan / marks / byte refs / sandbox guards (12 checks)
+node bench/lag.mjs 50                 # throughput / latency benchmark
 ```
 
-## 数据与隐私
+See [CONTRIBUTING.md](CONTRIBUTING.md) for conventions and the review checklist.
 
-- 录制只写本机 `dataRoot`，不上传；
-- 扫描脚本、FSM 场景由用户仓库管理，插件不保存、不注册；
-- 删除录制不是模型能发起的动作。
+## Documentation
 
-## 边界
+- [docs/README.md](docs/README.md) — index of the reference pages
+- [docs/tools.md](docs/tools.md) — all 18 tools, parameters, returns, errors
+- [docs/fsm.md](docs/fsm.md) — FSM scenario grammar and patterns
+- [docs/scanning.md](docs/scanning.md) — scan-script contract, marks, sandbox
+- [docs/configuration.md](docs/configuration.md) — settings, data layout, archival semantics
+- [docs/panel.md](docs/panel.md) — the panel in daily use
+- [docs/architecture.md](docs/architecture.md) — internals for contributors
+- [docs/troubleshooting.md](docs/troubleshooting.md) — error codes and FAQ
+- [SKILL.md](SKILL.md) — the compact, agent-facing manual the model loads
 
-- 没有通用触发器/自动唤醒：实时响应交给状态机，事后判定交给扫描脚本；
-- 不做运行时配置工具，配置走 profile；
-- 掉线不自动重连，需重新 `serial_open`。
+## Roadmap & limits
+
+- No generic trigger engine and no automatic wake-up of the model on a fault state (*optional* future extension, not implemented).
+- No automatic reconnect on a dropped device: re-open the port.
+- Runtime settings changes require a DSH restart (config comes from the profile).
 
 ## License
 
-[MIT](./LICENSE) © 2026 luochaozheng
+[MIT](LICENSE) © 2026 luochaozheng
