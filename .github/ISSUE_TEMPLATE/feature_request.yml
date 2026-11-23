@@ -1,0 +1,33 @@
+name: Feature request
+description: Suggest a capability or a usability improvement.
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you unable to do today, and why does it matter?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What the tool / panel / scenario grammar should do.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you already tried (e.g. a scan script or FSM scenario).
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This is not a generic trigger engine / editor request (out of scope by design).
+          required: true
+        - label: I checked docs/ and existing issues for the same idea.
+          required: false

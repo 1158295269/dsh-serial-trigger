@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Troubleshooting guide
+    url: ./docs/troubleshooting.md
+    about: Error codes and the FAQ before opening an issue.
+  - name: Security issue
+    url: ./SECURITY.md
+    about: Please report vulnerabilities privately, not as a public issue.

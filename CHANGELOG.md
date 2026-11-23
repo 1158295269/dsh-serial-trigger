@@ -16,6 +16,9 @@ next tagged release, and the affected section notes it.
 
 ### Added
 
+- GitHub release scaffolding: a CI workflow (Ubuntu + Windows, Node 24: install,
+  unit tests, panel syntax, `npm pack` shape), issue forms, a pull-request template,
+  `.gitattributes` line-ending policy and `.editorconfig`.
 - `CHANGELOG.md` — the full release history from v0.1.0 onwards, in Keep a Changelog
   format, so upgrade notes live in one place.
 - `docs/` — a human documentation set indexed by `docs/README.md`, with a tool reference

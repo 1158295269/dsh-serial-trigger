@@ -20,6 +20,12 @@ tests, hardware gates and real recordings settle arguments.
    `bin/rules-check.mjs COM8` are written for that firmware; `bin/fsm-check.mjs` is
    the FSM equivalent.
 
+## Issues and pull requests
+
+- Bug reports use the issue form: include the plugin/DSH versions, the error
+  envelope and the `captureId` — never paste credentials or proprietary device logs.
+- Pull requests use the template checklist; one logical change per PR.
+- Security issues go through [SECURITY.md](SECURITY.md), not a public issue.
 ## Gates before a PR
 
 ```bash

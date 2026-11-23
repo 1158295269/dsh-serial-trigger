@@ -3,6 +3,31 @@
 This is the maintainer's release checklist. The market indexes npm packages that
 carry the `dsh-plugin` keyword, so **npm is the source of truth**.
 
+## 0. GitHub first (recommended before npm)
+
+1. Create an **empty** public repository `<owner>/dsh-serial-trigger` (no README,
+   license or .gitignore — the working copy already has them).
+2. Point the working copy at it and push the branch and tags:
+
+   ```bash
+   git remote add origin https://github.com/<owner>/dsh-serial-trigger.git
+   git push -u origin main
+   git push origin --tags
+   ```
+
+   The first HTTPS push opens Git Credential Manager for a browser sign-in; later
+   pushes reuse the stored credential. SSH also works.
+3. Fill the package metadata once the URL exists: `repository`, `homepage`, `bugs`
+   in `package.json`, and add the CI badge to `README.md`.
+4. Set repository topics for discoverability: `dsh-plugin`, `dsh`,
+   `deepseek-harness`, `serial`, `serialport`, `uart`, `plugin`.
+5. CI (`.github/workflows/ci.yml`) runs on every push/PR: Ubuntu + Windows, Node 24,
+   `pnpm install --frozen-lockfile`, unit tests, panel syntax, `npm pack` shape.
+6. Optional: create a GitHub Release from tag `vX.Y.Z` and attach the archives from
+   the release folder (`git archive` zip + `npm pack` tarball).
+
+Only after the repository is public and CI is green, continue with npm.
+
 ## 1. Prepare
 
 ```bash

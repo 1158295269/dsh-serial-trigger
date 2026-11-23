@@ -1,0 +1,56 @@
+name: Bug report
+description: Something in capture, tail, scan, FSM or the panel is wrong.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing: check `docs/troubleshooting.md` for the error code and the
+        FAQ. If a recording is involved, include its `captureId` and the output of
+        `serial_captures` for it — never attach device logs that may contain secrets.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: Actual behavior, in one paragraph.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. serial_open ...
+        2. serial_tail ...
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version / environment
+      description: Plugin version, DSH version, OS, Node.js, adapter chip.
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error envelope / trace
+      description: Paste the tool result (code/message/hint) or FSM trace. Redact secrets.
+      render: json
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed credentials/device secrets from the paste.
+          required: true
