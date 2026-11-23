@@ -1,6 +1,6 @@
 # dsh-serial-trigger
 
-[简体中文](README.zh-CN.md) · [Changelog](CHANGELOG.md) · [Docs](docs/README.md) · MIT
+[![CI](https://github.com/1158295269/dsh-serial-trigger/actions/workflows/ci.yml/badge.svg)](https://github.com/1158295269/dsh-serial-trigger/actions/workflows/ci.yml) · [简体中文](README.zh-CN.md) · [Changelog](CHANGELOG.md) · [Docs](docs/README.md) · MIT
 
 A DSH (DeepSeek Harness) plugin for real serial work: **lossless capture**, incremental tail, byte-level reverse lookup, workspace scan scripts that emit byte-referenced marks, and a **live FSM middleware** — so the model plans while the script keeps millisecond timing. 18 model-facing tools, a per-conversation panel, MIT licensed.
 
@@ -38,13 +38,16 @@ The panel is registered as a conversation-view tab (`串口`) beside `对话` an
 
 Requirements: DSH desktop (tested on `0.2.1-rc.2`), Node.js ≥ 24, and an OS driver for your USB-serial adapter.
 
-1. Install into a DSH profile:
+1. Install into a DSH profile. Until the first npm release, install straight from
+   GitHub (the package has no build step):
 
    ```bash
    cd "$DSH_HOME/profiles/desktop"      # the profile that should load it
-   pnpm add dsh-serial-trigger
+   pnpm add github:1158295269/dsh-serial-trigger
+   # later, once published:
+   # pnpm add dsh-serial-trigger
    # or, while developing:
-   pnpm add link:/path/to/dsh-serial-trigger
+   # pnpm add link:/path/to/dsh-serial-trigger
    ```
 
 2. Restart DSH. The package declares `dsh.bundle.patch`, so the host mounts `serial-trigger` from the package and registers the browser panel automatically (`dsh.client`).

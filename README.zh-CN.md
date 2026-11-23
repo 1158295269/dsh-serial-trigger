@@ -1,6 +1,6 @@
 # dsh-serial-trigger
 
-[English](README.md) · [更新日志](CHANGELOG.md) · [文档目录](docs/README.md) · MIT
+[![CI](https://github.com/1158295269/dsh-serial-trigger/actions/workflows/ci.yml/badge.svg)](https://github.com/1158295269/dsh-serial-trigger/actions/workflows/ci.yml) · [English](README.md) · [更新日志](CHANGELOG.md) · [文档目录](docs/README.md) · MIT
 
 DSH（DeepSeek Harness）串口助手插件：**无损录制** + 增量读取 + 字节级回查 + 工作区扫描脚本（只产出字节引用）+ **实时 FSM 中间件**。模型负责规划，脚本负责毫秒级时序。18 个模型工具、会话内面板，MIT 许可。
 
@@ -29,13 +29,15 @@ DSH（DeepSeek Harness）串口助手插件：**无损录制** + 增量读取 + 
 
 要求：DSH 桌面端（在 `0.2.1-rc.2` 上测过）、Node.js ≥ 24、你的 USB 串口适配器驱动。
 
-1. 装进 DSH profile：
+1. 装进 DSH profile。npm 首发前可直接从 GitHub 安装（本包无构建步骤）：
 
    ```bash
    cd "$DSH_HOME/profiles/desktop"      # 要让哪个 profile 加载
-   pnpm add dsh-serial-trigger
+   pnpm add github:1158295269/dsh-serial-trigger
+   # npm 发布后：
+   # pnpm add dsh-serial-trigger
    # 本地开发：
-   pnpm add link:/path/to/dsh-serial-trigger
+   # pnpm add link:/path/to/dsh-serial-trigger
    ```
 
 2. 重启 DSH。包里的 `dsh.bundle.patch` 会让宿主挂载 `serial-trigger`，`dsh.client` 声明的面板会自动注册。

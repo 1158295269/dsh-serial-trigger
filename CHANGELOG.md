@@ -29,6 +29,9 @@ next tagged release, and the affected section notes it.
 
 ### Changed
 
+- Repository metadata now points at the public GitHub repository (`repository`,
+  `homepage`, `bugs`), and both READMEs carry the CI badge and a GitHub-install
+  path for the pre-npm period.
 - npm packaging prepared for the release: the `files` list now ships `docs/`,
   `CHANGELOG.md`, `README.zh-CN.md` and the community documents, and the package declares
   a `dsh` engine floor next to `node >= 24`.
