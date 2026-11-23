@@ -12,7 +12,14 @@ The top section (`0.3.12`) is the current unreleased development version — doc
 and release preparation, not tagged yet. Untagged intermediate versions are folded into the
 next tagged release, and the affected section notes it.
 
-## 0.3.12 - 2026-11-23 (unreleased)
+## 0.3.13 - 2026-11-23
+
+### Fixed
+
+- The npm package page now shows the current README: re-published with the registry
+  install instructions and the npm badge (documentation-only release, no code change).
+
+## 0.3.12 - 2026-11-23
 
 ### Added
 
