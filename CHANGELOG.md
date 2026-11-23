@@ -29,6 +29,9 @@ next tagged release, and the affected section notes it.
 
 ### Changed
 
+- Published to npm as `dsh-serial-trigger@0.3.12` (first public release); both
+  READMEs now install from the registry and carry the npm version badge.
+
 - Repository metadata now points at the public GitHub repository (`repository`,
   `homepage`, `bugs`), and both READMEs carry the CI badge and a GitHub-install
   path for the pre-npm period.
