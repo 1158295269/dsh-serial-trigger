@@ -128,3 +128,14 @@ test('R8 a scenario file inside the workspace loads and runs', async (t) => {
   const sim = await h.service.fsmSimulate(closed.captureId, { scenario: file });
   assert.equal(sim.state, 'beating');
 });
+
+// status.enteredAt used to be 0 for live machines (the Machine clock default).
+test('R9 a live machine reports a real enteredAt', async (t) => {
+  const h = await harness();
+  t.after(h.cleanup);
+  const before = Date.now();
+  const started = await h.service.fsmStart({ scenario: SCENARIO, portId: h.portId, owner: { kind: 'agent', id: 'a1' } });
+  assert.ok(started.status.enteredAt >= before, 'enteredAt must be a wall-clock start time');
+  assert.ok(Math.abs(started.status.enteredAt - Date.now()) < 5000);
+  await h.service.fsmStop(started.runId);
+});

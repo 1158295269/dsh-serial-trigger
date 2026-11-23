@@ -166,3 +166,20 @@ test('O5 marks and bytes results are lossless JSON', async (t) => {
   assert.equal(short.data.truncated, true);
   assert.ok(short.data.length < 16);
 });
+
+// A defaulted tail (no cursor) used to stop after maxLines at the OLDEST lines
+// of the ring window, which made agents think the device had gone quiet.
+test('O6 tail without a cursor returns the newest lines of the window', async (t) => {
+  const h = await harness(t);
+  const opened = await h.service.open({ port: 'MOCK:G6', project: 'out', owner: { kind: 'agent', id: 'unknown' }, origin: 'agent' });
+  for (let i = 0; i < 30; i += 1) h.service.feed(opened.portId, Buffer.from('L' + i + '\n'));
+  await new Promise((r) => setTimeout(r, 30));
+
+  const fresh = await h.byName.serial_tail.execute({ portId: opened.portId, maxLines: 5 }, {});
+  assert.equal(fresh.ok, true, JSON.stringify(fresh.error));
+  assert.deepEqual(fresh.data.lines.map((l) => l.text), ['L25', 'L26', 'L27', 'L28', 'L29']);
+
+  const fromStart = await h.byName.serial_tail.execute({ portId: opened.portId, cursor: 0, maxLines: 5 }, {});
+  assert.equal(fromStart.ok, true);
+  assert.deepEqual(fromStart.data.lines.map((l) => l.text), ['L0', 'L1', 'L2', 'L3', 'L4']);
+});

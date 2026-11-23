@@ -38,14 +38,17 @@ test('e2e: agent opens a port, tails twice, sends, closes, then finds the file a
   for (let i = 0; i < 19; i++) service.feed(portId, Buffer.from('after ' + i + '\n'));
   await new Promise((r) => setTimeout(r, 60));
 
+  // No cursor means "what just happened": the newest lines of the window.
   const t1 = await byName.serial_tail.execute({ portId, maxLines: 20 });
   assert.equal(t1.ok, true);
   assert.equal(t1.data.lines.length, 20);
-  assert.equal(t1.data.lines[0].text, 'boot step 0');
+  assert.equal(t1.data.lines.at(-1).text, 'after 18');
 
-  const t2 = await byName.serial_tail.execute({ portId, cursor: t1.data.cursor, maxLines: 100 });
+  // History is read explicitly from the start of the window.
+  const t2 = await byName.serial_tail.execute({ portId, cursor: 0, maxLines: 100 });
   assert.equal(t2.ok, true);
-  assert.ok(t2.data.lines.length >= 20);
+  assert.equal(t2.data.lines.length, 40);
+  assert.equal(t2.data.lines[0].text, 'boot step 0');
   assert.ok(t2.data.lines.some((l) => l.text.includes('i2c timeout')));
 
   const t3 = await byName.serial_tail.execute({ portId, cursor: t2.data.cursor });

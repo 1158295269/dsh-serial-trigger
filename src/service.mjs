@@ -341,20 +341,24 @@ export class SerialService {
       assembler = new LineAssembler({ lineEnding: mode });
       cur.assemblers.set(mode, assembler);
     }
+    const explicitCursor = opts.cursor !== undefined && opts.cursor !== null;
     let cursor = opts.cursor;
     // No cursor means "show me what just happened", not "start from now":
     // default to the tail of the ring buffer so a fresh tail call is useful.
-    if (cursor === undefined || cursor === null) cursor = Math.max(0, this.hub.head(portId) - (opts.backlogBytes ?? 262144));
+    if (!explicitCursor) cursor = Math.max(0, this.hub.head(portId) - (opts.backlogBytes ?? 262144));
     if (cursor > this.hub.head(portId)) cursor = this.hub.head(portId);
 
     const lines = [];
     let consumed = cursor;
+    // A defaulted call reads the whole window and keeps the newest maxLines;
+    // stopping at maxLines would return the OLDEST lines of the window instead.
+    const cap = explicitCursor ? maxLines : Number.MAX_SAFE_INTEGER;
     const take = () => {
       const batches = this.hub.backlog(portId, consumed, 4 << 20);
       for (const batch of batches) {
         for (const line of assembler.feed(batch)) {
           lines.push({ t: line.tWallMs, seq: line.seq, text: line.text, dir: batch.dir === 1 ? 'tx' : 'rx', partial: line.partial });
-          if (lines.length >= maxLines) {
+          if (lines.length >= cap) {
             consumed = batch.seq + batch.bytes.length;
             return true;
           }
@@ -365,6 +369,7 @@ export class SerialService {
     };
 
     let full = take();
+    if (!explicitCursor && lines.length > maxLines) lines.splice(0, lines.length - maxLines);
     if (!full && lines.length === 0 && timeoutMs > 0) {
       const sub = this.hub.subscribe(TOPIC.STREAM, { filter: { portId }, cursor: consumed, queueBytes: 4 << 20 });
       const deadline = Date.now() + timeoutMs;
@@ -648,7 +653,7 @@ export class SerialService {
       }
     }
     const runId = 'fsm-' + (++this.fsmSeq);
-    const machine = new Machine(def);
+    const machine = new Machine(def, { startAt: Date.now() });
     const run = { id: runId, machine, portId: id, owner: owner || null, alive: true, marks: [], startedAt: Date.now(), scenario: machine.name };
     this.fsmRuns.set(runId, run);
     const sub = this.hub.subscribe(TOPIC.STREAM, { filter: { portId: id }, cursor: this.hub.head(id) });

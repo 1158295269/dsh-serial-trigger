@@ -70,7 +70,13 @@ test('V06 tail honours maxLines exactly at the boundary', async (t) => {
   feedLines(service, portId, Array.from({ length: 10 }, (_, i) => 'l' + i));
   await sleep(40);
 
-  const first = await service.tail({ portId, maxLines: 5 });
+  // A defaulted tail is "the newest lines of the window"...
+  const newest = await service.tail({ portId, maxLines: 5 });
+  assert.equal(newest.lines.length, 5);
+  assert.deepEqual(newest.lines.map((l) => l.text), ['l5', 'l6', 'l7', 'l8', 'l9']);
+
+  // ...and the explicit cursor walk still honours maxLines exactly.
+  const first = await service.tail({ portId, cursor: 0, maxLines: 5 });
   assert.equal(first.lines.length, 5);
   assert.deepEqual(first.lines.map((l) => l.text), ['l0', 'l1', 'l2', 'l3', 'l4']);
 
