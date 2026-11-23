@@ -1,9 +1,8 @@
 {
   "name": "dsh-serial-trigger",
   "version": "0.3.10",
-  "private": true,
   "type": "module",
-  "description": "DSH serial assistant: lossless capture, pub/sub byte stream, reverse lookup, trigger-ready.",
+  "description": "DSH serial assistant: lossless capture, incremental tail, byte-level reverse lookup, workspace scan marks and a live FSM middleware for the serial port.",
   "main": "./src/index.mjs",
   "exports": {
     ".": "./src/index.mjs",
@@ -14,7 +13,10 @@
   "scripts": {
     "test": "node --test --test-force-exit test",
     "test:ui": "node test/ui/run.mjs --base %DSH_BASE% --token %DSH_TOKEN%",
-    "bench": "node bench/lag.mjs 50"
+    "bench": "node bench/lag.mjs 50",
+    "check:serial": "node bin/shell-check.mjs",
+    "check:rules": "node bin/rules-check.mjs",
+    "prepublishOnly": "node --test --test-force-exit test"
   },
   "engines": {
     "node": ">=24"
@@ -32,9 +34,26 @@
     "src",
     "client",
     "cordis.patch.yml",
-    "README.md"
+    "SKILL.md",
+    "README.md",
+    "LICENSE"
   ],
   "dependencies": {
     "serialport": "^13.0.0"
+  },
+  "license": "MIT",
+  "author": "luochaozheng <92290@emax.com>",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "serial",
+    "serialport",
+    "uart",
+    "plugin",
+    "fsm",
+    "capture"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

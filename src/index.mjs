@@ -45,7 +45,11 @@ async function mount(ctx, settings) {
   // they encode this project's protocol knowledge and should travel with its git repo.
   const workspaceRoot = settings.workspaceRoot || process.cwd();
   const rulesRoot = settings.rulesRoot || join(workspaceRoot, '.serial', 'rules');
-  const service = new SerialService({ hub, store, rulesRoot });
+  // workspaceRoot/scanRoots used to be computed here but not forwarded, so a
+  // configured workspace root never reached the scan runner (it silently fell
+  // back to the host process cwd). Forward both: scanRoots wins, workspaceRoot
+  // is the fallback.
+  const service = new SerialService({ hub, store, rulesRoot, workspaceRoot, scanRoots: settings.scanRoots });
   if (settings.mockPorts) for (const p of settings.mockPorts) service.registerMockPort(p);
 
   for (const tool of createTools(service)) {
