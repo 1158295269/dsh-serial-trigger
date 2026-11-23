@@ -1,6 +1,6 @@
 {
   "name": "dsh-serial-trigger",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "type": "module",
   "description": "DSH serial assistant: lossless capture, incremental tail, byte-level reverse lookup, workspace scan marks and a live FSM middleware for the serial port.",
   "main": "./src/index.mjs",

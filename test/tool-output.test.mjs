@@ -165,6 +165,8 @@ test('O5 marks and bytes results are lossless JSON', async (t) => {
   assert.equal(short.ok, true);
   assert.equal(short.data.truncated, true);
   assert.ok(short.data.length < 16);
+  // The reported offset is the requested one, not the containing record's start.
+  assert.equal(short.data.offset, 12);
 });
 
 // A defaulted tail (no cursor) used to stop after maxLines at the OLDEST lines
@@ -182,4 +184,21 @@ test('O6 tail without a cursor returns the newest lines of the window', async (t
   const fromStart = await h.byName.serial_tail.execute({ portId: opened.portId, cursor: 0, maxLines: 5 }, {});
   assert.equal(fromStart.ok, true);
   assert.deepEqual(fromStart.data.lines.map((l) => l.text), ['L0', 'L1', 'L2', 'L3', 'L4']);
+});
+
+// captures.bytes_rx used to be the total written bytes (rx + tx), so a capture
+// with 17 bytes of TX reported 2749 rx on a 2732-byte capture.
+test('O7 a capture reports rx and tx bytes separately', async (t) => {
+  const h = await harness(t);
+  const opened = await h.service.open({ port: 'MOCK:G7', project: 'out', owner: { kind: 'agent', id: 'unknown' }, origin: 'agent' });
+  h.service.feed(opened.portId, Buffer.from('HELLO\n'));
+  await h.service.send(opened.portId, Buffer.from('PING'), { owner: { kind: 'agent', id: 'unknown' } });
+  await new Promise((r) => setTimeout(r, 30));
+  await h.service.close(opened.portId);
+  const caps = await h.byName.serial_captures.execute({ project: 'out' }, {});
+  assert.equal(caps.ok, true);
+  const row = caps.data.captures.find((c) => c.id === opened.captureId);
+  assert.ok(row, 'capture must be listed');
+  assert.equal(row.bytes_rx, 6, 'rx column counts only received bytes');
+  assert.equal(row.bytes_tx, 4, 'tx column counts only sent bytes');
 });

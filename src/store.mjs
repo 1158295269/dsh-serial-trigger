@@ -173,8 +173,10 @@ export class Store {
       )
       .run(
         ended,
-        stats.bytes,
-        extra.txBytes ?? 0,
+        // stats.bytes is everything the writer accepted; keep the index columns
+        // directional so bytes_rx really means received bytes.
+        Math.max(0, stats.bytes - (Number(extra.txBytes) || 0)),
+        Number(extra.txBytes) || 0,
         digest.lines,
         digest.errorsTotal,
         extra.cleanClose === false ? 0 : 1,
@@ -194,7 +196,7 @@ export class Store {
     if (opts.keyword) { where.push('(digest LIKE ? OR conversation LIKE ? OR port LIKE ?)'); const k = '%' + opts.keyword + '%'; args.push(k, k, k); }
     if (!opts.includeMissing) where.push('missing = 0');
     const sql =
-      'SELECT id, project, conversation, session_id, port, baud, path, started_ms, ended_ms, bytes_rx, lines, truncated, missing, origin, digest FROM captures' +
+      'SELECT id, project, conversation, session_id, port, baud, path, started_ms, ended_ms, bytes_rx, bytes_tx, lines, truncated, missing, origin, digest FROM captures' +
       (where.length ? ' WHERE ' + where.join(' AND ') : '') +
       ' ORDER BY started_ms DESC LIMIT ' + (opts.limit || 20);
     return this.db.prepare(sql).all(...args);
@@ -442,7 +444,9 @@ export class Store {
     }, { dirs: [dir] });
     // truncated means "the file ended before the requested range was filled";
     // a full-length read is not truncated even when the file has more bytes.
-    return { dir, offset: actualStart === null ? start : actualStart, length: have, data: Buffer.concat(parts), truncated: have < want };
+    // Return the caller's start, never the containing record's start: the body is
+    // sliced from the requested byte, so an aligned offset would mislabel it.
+    return { dir, offset: start, length: have, data: Buffer.concat(parts), truncated: have < want };
   }
 
   /** Coarse (time, offset) timeline used to turn a time window into a byte window. */
@@ -498,7 +502,7 @@ export class Store {
 
   /** Decode a capture into lines for read-only viewing. Capped to keep memory sane. */
   async readCaptureLines(captureId, opts = {}) {
-    const row = this.db.prepare('SELECT id, path, project, conversation, port, baud, ended_ms, bytes_rx, lines FROM captures WHERE id = ?').get(captureId);
+    const row = this.db.prepare('SELECT id, path, project, conversation, port, baud, ended_ms, bytes_rx, bytes_tx, lines FROM captures WHERE id = ?').get(captureId);
     if (!row) throw new SerialError('E_NO_SUCH_CAPTURE', 'no capture with id ' + captureId, {
       hint: 'Call serial_captures() to list what exists.',
       fix: ['serial_captures()'],
@@ -532,7 +536,7 @@ export class Store {
     }
     return {
       id: row.id, project: row.project, conversation: row.conversation, port: row.port, baud: row.baud,
-      endedMs: row.ended_ms, bytes: row.bytes_rx, path: row.path,
+      endedMs: row.ended_ms, bytes: row.bytes_rx, bytesTx: row.bytes_tx, path: row.path,
       lines, total: row.lines || lines.length, truncatedByCap,
     };
   }
