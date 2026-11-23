@@ -99,6 +99,11 @@ C:\Users\Administrator\.dsh\skills\dsh-serial-trigger\SKILL.md -> D:\文档\杂�
     live 无转移时 stop+restart、trace effects、marks.window；
   - 五轮缺陷收敛：3 接口 → 2 代码 → 2 代码 → 0 阻断 → 0 阻断（仅表述）；维持连续通过。
 
+- **SKILL 验收结论（2026-11-23）**：第 5、6 轮连续通过（v0.3.9 / v0.3.10），`skill` 工具加载成功，
+  L1/L2/L3 全过、结束时无 open 端口、0 阻断性代码缺陷 → **判定合格**。第 6 轮再收 7 条表述级建议
+  （grep 只读已落盘、event 未注册静默忽略、wait 只等注册后转移、timeoutMs 有数据即返回、ports 含 closed 历史、
+  首行半行、hint 措辞），已写入 SKILL。第 5/6 轮调用 71/74 次、耗时 14.5/17 分钟（含 100s 挂机录制与本机 2–6s/次工具延迟）。
+
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24
 
@@ -115,9 +120,8 @@ C:\Users\Administrator\.dsh\skills\dsh-serial-trigger\SKILL.md -> D:\文档\杂�
 
 ## 下次接手先做
 
-1. **v0.3.10 需要重启一次宿主才干净**：本轮用 profile 热重载验证了工具边界（tail/enteredAt），但热重载会留
-   重复 HTTP 路由、面板接口可能 500；重启即清。SKILL 侧通过软链 + watch 热生效，不需要重启；
-2. 想复核稳定性就按上面的「SKILL 验收协议」再跑 1 轮盲跑（合格线：全过 + 0 阻断缺陷 + 连续 2 轮）；
+1. **重启一次宿主**：v0.3.10 是本轮用 profile 热重载验证的，会留重复 HTTP 路由、面板接口可能 500；重启即清；
+2. 无排期项。想复核就按「SKILL 验收协议」再跑 1 轮盲跑（合格线：全过 + 0 阻断缺陷 + 连续 2 轮）；v0.4 可选；
 2. 没有排期项；v0.4 可选（SPEC §24），动手前先确认真要投入；
 2. 动面板用 Windows-MCP + 区域截图（整屏 Snapshot 30–75 秒，太慢）。
 ## 约束
