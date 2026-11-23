@@ -116,7 +116,7 @@ test('S09 exporting to an unwritable path reports E_CAPTURE_IO', async () => {
   await store.closeCapture(cap.captureId);
 
   await assert.rejects(
-    () => store.exportCapture(cap.captureId, { format: 'text', out: 'Z:\\no-such-drive\\x.txt' }),
+    () => store.exportCapture(cap.captureId, { format: 'text', out: join(root, 'missing-dir', 'x.txt') }),
     (err) => {
       assert.equal(err.code, 'E_CAPTURE_IO');
       assert.ok(err.hint.length > 10);

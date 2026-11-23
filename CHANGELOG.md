@@ -42,6 +42,9 @@ next tagged release, and the affected section notes it.
   `COM8` (they use mock ports), the archive test waits for both the file and the
   index row to disappear, and the `test` script passes a glob instead of a directory
   (Node 24 treats a bare directory as a module path).
+- The suite now also passes on Linux: `ioPath` assertions are Windows-conditioned
+  (the long-path prefix is a Windows-only concern) and the export-failure tests create
+  an unwritable path from a missing parent directory instead of a nonexistent drive.
 
 ### Documentation
 

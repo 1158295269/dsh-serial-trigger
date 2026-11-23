@@ -21,15 +21,16 @@ test('E-01 SerialError defaults are stable', () => {
   assert.equal(e.name, 'SerialError');
 });
 
-// paths: UNC, already-prefixed, relative
+// paths: the long-path prefix is a Windows-only concern; elsewhere ioPath is a passthrough
 test('E-02 ioPath handles UNC, already-prefixed and relative inputs', () => {
-  const unc = '\\\\server\\share\\' + 'x'.repeat(300);
-  const out = ioPath(unc);
-  if (process.platform === 'win32') {
-    assert.ok(out.startsWith('\\\\?\\UNC\\'), out.slice(0, 12));
+  if (process.platform !== 'win32') {
+    assert.equal(ioPath('relative.txt'), 'relative.txt', 'non-Windows passes paths through');
+    assert.equal(ioPath(''), '');
+    return;
   }
-  const prefixed = '\\\\?\\C:\\already\\long';
-  assert.equal(ioPath(prefixed), prefixed);
+  const unc = '\\\\server\\share\\' + 'x'.repeat(300);
+  assert.ok(ioPath(unc).startsWith('\\\\?\\UNC\\'));
+  assert.equal(ioPath('\\\\?\\C:\\already\\long'), '\\\\?\\C:\\already\\long');
   assert.equal(ioPath('relative.txt'), resolve('relative.txt'));
   assert.equal(ioPath(''), '');
 });
@@ -83,7 +84,8 @@ test('E-05 unexpected service errors still produce an actionable envelope', asyn
 
 // tools: export surfaces E_CAPTURE_IO through the tool layer too
 test('E-06 export failure keeps its code through the tool envelope', async (t) => {
-  const store = await Store.open({ root: await tmpRoot('e6-') });
+  const root = await tmpRoot('e6-');
+  const store = await Store.open({ root });
   const service = new SerialService({ store });
   t.after(() => service.dispose());
   const byName = Object.fromEntries(createTools(service).map((x) => [x.name, x]));
@@ -91,7 +93,7 @@ test('E-06 export failure keeps its code through the tool envelope', async (t) =
   service.feed(opened.data.portId, Buffer.from('x\n'));
   const closed = await byName.serial_close.execute({ portId: opened.data.portId });
 
-  const res = await byName.serial_export.execute({ captureId: closed.data.captureId, out: 'Z:\\nope\\x.txt' });
+  const res = await byName.serial_export.execute({ captureId: closed.data.captureId, out: join(root, 'missing-dir', 'x.txt') });
   assert.equal(res.ok, false);
   assert.equal(res.error.code, 'E_CAPTURE_IO');
   assert.ok(Array.isArray(res.error.fix) && res.error.fix.length > 0);
