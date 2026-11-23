@@ -3,7 +3,7 @@ name: dsh-serial-trigger
 description: 抓串口、留证据、按工作区脚本打故障点、用状态机替模型做实时收发。当需要打开/录制串口、回查某次调试、定位可疑字节、或让一个脚本顶住实时性时使用。
 ---
 
-# 串口助手（v0.3.10，18 个工具）
+# 串口助手（v0.3.11，18 个工具）
 
 ## 什么时候用
 
@@ -36,7 +36,7 @@ serial_close {portId}                                   → {path, bytesRx, byte
 ```
 
 - 落盘：`<dataRoot>/<project>/<端口>-<YYYYMMDD-HHMMSS>.slog`。Windows 保留名会被改写：`COM8` → 文件名/`captureId` 为 `_COM8-…`（正常现象）。
-- `serial_tail` 返回 `{cursor, lines:[{t,seq,text,dir,partial}], pending, head, state, bytesRx, bytesTx, startedAt}`（`timeoutMs>0` 时若有数据会立即返回，不必等满；没数据才等）：`seq` 是该方向**字节偏移**，不是行号；**省略 `cursor` = 从 ring 窗口（约 256KB）里取最新的 `maxLines` 行**（想看更早历史就显式传 `cursor: 0` 或上一轮的 cursor）；`pending` 是未断行残片，不是丢包；`timeoutMs>0` 是长轮询，比 tight loop 省调用。
+- `serial_tail` 返回 `{cursor, lines:[{t,seq,text,dir,partial}], pending, head, state, bytesRx, bytesTx, startedAt}`（`head` = 当前流末尾的字节 seq，一般用 `cursor`/`bytesRx` 即可；`timeoutMs>0` 时若有数据会立即返回，不必等满；没数据才等）：`seq` 是该方向**字节偏移**，不是行号；**省略 `cursor` = 从 ring 窗口（约 256KB）里取最新的 `maxLines` 行**（想看更早历史就显式传 `cursor: 0` 或上一轮的 cursor）；`pending` 是未断行残片，不是丢包；`timeoutMs>0` 是长轮询，比 tight loop 省调用。
 - `serial_send`：`text` 与 `hex` 只能给一个；设备通常要**行尾**才把输入当一行回显（`append:'lf'` 或 `'crlf'`），`none` 可能只回显裸字节。发送也会进录制（tx 方向）。
 - `serial_close` 要等落盘：几十 MB 的录制可能占用几秒；调用超时先用 `serial_ports` 核对该 portId 状态，不要盲目重发 open。
 - 用完必须 close；不自动重连，掉线（`E_DEVICE_LOST`）要重新 open。
@@ -44,7 +44,7 @@ serial_close {portId}                                   → {path, bytesRx, byte
 ## B 回查历史
 
 ```
-serial_captures {project?, since?, until?, keyword?, limit?=20}   → {captures:[{id, project, conversation, session_id, port, baud, path, started_ms, ended_ms, bytes_rx, lines, origin, digest, truncated, missing}]}
+serial_captures {project?, since?, until?, keyword?, limit?=20}   → {captures:[{id, project, conversation, session_id, port, baud, path, started_ms, ended_ms, bytes_rx, bytes_tx, lines, origin, digest, truncated, missing}]}（bytes_rx / bytes_tx 分方向统计）
 serial_grep {captureId, pattern, context?=2, maxHits?=50}        → {captureId, hits:[{line, seq, tWallMs, dir, text, before:[{line,text}]}], count}
 serial_export {captureId, format?='text'|'hex'|'csv', timestamps?=true, encoding?, out?}   → {path, format, bytes, lines}
 ```
@@ -60,15 +60,16 @@ serial_export {captureId, format?='text'|'hex'|'csv', timestamps?=true, encoding
 - mark 字段：`anchor:{dir,offset,length}`（`offset` 必填；`length=0` 表示不指向连续字节，取上下文需自己按 offset 扩窗）、`label`、`kind:'fault'|'state'|'note'`、`severity:'error'|'warn'|'info'`、`t`、`code:{file,symbol}`（推测的代码位置，可选）、`hypothesis`（可选）、`next:[{label, expect?}]`（对象数组，不是字符串）、`extra`。
 - 沙箱：不能 `import`；只有 `Buffer` 与空 console；默认 20s 超时（`timeoutMs` 可调）、可取消、最多 5000 条 mark。
 - 录制从 `serial_open` 时刻开始，**首行可能是半行**（首块残片）：脚本拼行时要容忍/丢弃它，否则会当成非法行。
-- **工作区根**：默认是宿主进程工作目录（DSH 桌面端通常是 `<用户>\.dsh\profiles\desktop`），不是当前对话的工作目录；**相对路径也按宿主 cwd 解析**。不确定时直接 `serial_scan`：报错的 message 会给出**实际解析到的绝对路径**（以它为准）；hint 有时只是通用提示。场景文件同理（或直接传场景对象，绕开路径）。
+- **工作区根**：默认是宿主进程工作目录（DSH 桌面端通常是 `<用户>\.dsh\profiles\desktop`），不是当前对话的工作目录；**相对路径也按宿主 cwd 解析**。不确定时直接 `serial_scan`：对一个不存在的脚本调用一次，报错 message 会给出**实际解析到的绝对路径**（以它为准）；hint 有时只是通用提示。场景文件同理（或直接传场景对象，绕开路径）。
 
 ```
 serial_scan {captureId, script, label?, timeoutMs?=20000}   → {captureId, label, script, scannedBytes, marks(数量), truncated, file}
 serial_marks {captureId, rule?, severity?, beforeMs?=300, afterMs?=1000}   → {captureId, count, sources, marks:[{id, rule, anchor, t, kind, severity, label, code?, hypothesis?, next?, window:{dir,offset,length}}]}
-serial_bytes {captureId, dir:'rx'|'tx', offset, length≤8192, format?='hex'|'text'|'base64'}   → {dir, offset, length, truncated, body}（truncated=true = 到文件尾、实际返回短于 length）
+serial_bytes {captureId, dir:'rx'|'tx', offset, length≤8192, format?='hex'|'text'|'base64'}   → {dir, offset, length, truncated, body}（`offset` 原样返回请求起点；`length` 是实际字节数；`truncated=true` = 到文件尾、实际短于请求长度）
 ```
 
-- marks 只存引用不存文本：看内容用 `serial_bytes`（hex 是真相），需要上下文优先用每条 mark 自带的 `window:{dir,offset,length}`（`anchor.length=0` 时尤其）。同一脚本同一录制重扫幂等。
+- marks 只存引用不存文本：看内容用 `serial_bytes`（hex 是真相），需要上下文优先用每条 mark 自带的 `window:{dir,offset,length}`。同一脚本同一录制重扫幂等。
+- 写 mark 时 `t` 建议直接填 `rec.t`；`finish()` 的汇总 mark 若 `t` 缺失或 `anchor.length=0`，`window` 不会展开（等于 anchor），这时自己按 `anchor.offset` 扩窗取字节。
 - 判定是**事后**的：不监听、不触发、不自动重扫。
 
 ## D 状态机（实时执行者）
@@ -108,7 +109,7 @@ serial_fsm_stop {runId}                                → {runId, stopped, pers
 }
 ```
 
-- 转换键只有两种：`event:<name>`（`serial_fsm_event` 注入，**只有 live 能注入**）和 `line:/正则/`（设备某一行匹配）。目标状态没注册该事件时，`serial_fsm_event` 返回 ok 但不转移、不报错——注入前先 `serial_fsm_status` 看 `events`。
+- 转换键只有两种：`event:<name>`（`serial_fsm_event` 注入，**只有 live 能注入**；注入是同步执行转换动作的，返回的 `status` 可能已经包含 send/expect 结果，随后的 `serial_fsm_wait` 可能立即返回同一状态，别当成新转移）和 `line:/正则/`（设备某一行匹配）。目标状态没注册该事件时，`serial_fsm_event` 返回 ok 但不转移、不报错——注入前先 `serial_fsm_status` 看 `events`。
 - 转换动作：`send` / `expect`（同 matcher 写法）/ `waitMs` / `goto` / `else`（超时兜底目标）/ `mark` / `severity` / `extra`。
 - **写了 `send` 就必须同时写 `expect` + `waitMs` + `goto`**（不发盲包，否则 `E_BAD_SCENARIO`）；纯转换只要 `goto`。
 - `onTimeout`：`retry`(0..10)、`retryDelayMs`、`goto`、`mark`、`severity`、`stop:true`（停机）。

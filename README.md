@@ -75,7 +75,7 @@ serial_close({ portId })                            // 落盘 + 索引
 ## 开发
 
 ```bash
-npm test                              # 169 项单测（约 27s）
+npm test                              # 170 项单测（约 29s）
 node bin/shell-check.mjs COM8         # 真机字节透明/句柄/索引冒烟（7 项）
 node bin/rules-check.mjs COM8         # 扫描/标记/字节引用/沙箱守卫（12 项）
 node bench/lag.mjs 50                 # 吞吐/延迟基准
