@@ -17,14 +17,14 @@ async function harness(t) {
 test('B1 a second open without takeover is refused', async (t) => {
   const { service } = await harness(t);
 
-  const first = await service.open({ port: 'COM8', owner: { kind: 'session', id: 's1' } });
+  const first = await service.open({ port: 'MOCK:BUSY', owner: { kind: 'session', id: 's1' } });
   await assert.rejects(
-    () => service.open({ port: 'COM8', owner: { kind: 'agent', id: 'a1' } }),
+    () => service.open({ port: 'MOCK:BUSY', owner: { kind: 'agent', id: 'a1' } }),
     (err) => err.code === 'E_PORT_BUSY',
   );
   assert.equal(service.status(first.portId).state, 'open');
 
-  const second = await service.open({ port: 'COM8', owner: { kind: 'agent', id: 'a1' }, takeover: true });
+  const second = await service.open({ port: 'MOCK:BUSY', owner: { kind: 'agent', id: 'a1' }, takeover: true });
   assert.equal(service.status(second.portId).state, 'open');
   assert.equal(service.status(first.portId).state, 'closed');
 });
@@ -32,11 +32,11 @@ test('B1 a second open without takeover is refused', async (t) => {
 test('B2 autoTakeover takes over and flushes the previous capture', async (t) => {
   const { service } = await harness(t);
 
-  const panel = await service.open({ port: 'COM8', owner: { kind: 'session', id: 'panel-1' } });
+  const panel = await service.open({ port: 'MOCK:BUSY', owner: { kind: 'session', id: 'panel-1' } });
   service.feed(panel.portId, Buffer.from('before takeover\n'));
   await service.flush(panel.portId);
 
-  const agent = await service.open({ port: 'COM8', owner: { kind: 'agent', id: 'a1' }, autoTakeover: true });
+  const agent = await service.open({ port: 'MOCK:BUSY', owner: { kind: 'agent', id: 'a1' }, autoTakeover: true });
   assert.equal(service.status(panel.portId).state, 'closed');
   assert.equal(service.status(agent.portId).state, 'open');
 
@@ -59,10 +59,10 @@ test('B3 a takeover stops the state machine bound to that port', async (t) => {
   const { service } = await harness(t);
   const scenario = { name: 'watch', initial: 'a', states: { a: { on: {} } } };
 
-  const panel = await service.open({ port: 'COM8', owner: { kind: 'session', id: 'panel-1' } });
+  const panel = await service.open({ port: 'MOCK:BUSY', owner: { kind: 'session', id: 'panel-1' } });
   const run = await service.fsmStart({ scenario, portId: panel.portId, owner: { kind: 'session', id: 'panel-1' } });
 
-  await service.open({ port: 'COM8', owner: { kind: 'agent', id: 'a1' }, autoTakeover: true });
+  await service.open({ port: 'MOCK:BUSY', owner: { kind: 'agent', id: 'a1' }, autoTakeover: true });
   assert.throws(() => service.fsmStatus(run.runId), (err) => err.code === 'E_NO_SUCH_RUN');
 });
 

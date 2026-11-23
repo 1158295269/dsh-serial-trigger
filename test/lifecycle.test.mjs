@@ -153,8 +153,14 @@ test('L6 a conversation archived in the host UI loses its recordings', async (t)
   // Exactly what the desktop app does when the user archives the conversation.
   await writeArchiveList(home, ['s-ui']);
 
-  assert.equal(await waitFor(() => !existsSync(path), 4000), true, 'the archived recording must be gone');
-  assert.equal(mounted.service.store.listCapturesOfSession('s-ui').length, 0, 'its index row must be gone too');
+  assert.equal(
+    await waitFor(
+      () => !existsSync(path) && mounted.service.store.listCapturesOfSession('s-ui').length === 0,
+      4000,
+    ),
+    true,
+    'the archived recording and its index row must be gone',
+  );
 });
 
 test('L7 a conversation archived while the plugin was down is reconciled on mount', async (t) => {

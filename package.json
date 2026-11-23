@@ -11,12 +11,12 @@
     "./cordis.patch.yml": "./cordis.patch.yml"
   },
   "scripts": {
-    "test": "node --test --test-force-exit test",
+    "test": "node --test --test-force-exit \"test/*.test.mjs\"",
     "test:ui": "node test/ui/run.mjs --base %DSH_BASE% --token %DSH_TOKEN%",
     "bench": "node bench/lag.mjs 50",
     "check:serial": "node bin/shell-check.mjs",
     "check:rules": "node bin/rules-check.mjs",
-    "prepublishOnly": "node --test --test-force-exit test"
+    "prepublishOnly": "node --test --test-force-exit \"test/*.test.mjs\""
   },
   "engines": {
     "node": ">=24",

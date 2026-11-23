@@ -36,8 +36,8 @@ node bin/rules-check.mjs COM8  # hardware: scan/marks/bytes/sandbox guards
 node --check client/client.js  # panel bundle syntax
 ```
 
-If a test is flaky under load (the port-takeover trio can time out when the machine
-is busy), re-run it alone before assuming a regression.
+The unit suite never opens a physical port: takeover/port-busy cases run on mock
+ports. Hardware checks are the `bin/*-check.mjs` scripts, not `npm test`.
 
 ## Conventions
 

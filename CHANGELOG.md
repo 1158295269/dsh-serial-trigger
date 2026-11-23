@@ -36,6 +36,13 @@ next tagged release, and the affected section notes it.
   `CHANGELOG.md`, `README.zh-CN.md` and the community documents, and the package declares
   a `dsh` engine floor next to `node >= 24`.
 
+### Fixed
+
+- CI on clean machines: the port-takeover unit tests no longer open a physical
+  `COM8` (they use mock ports), the archive test waits for both the file and the
+  index row to disappear, and the `test` script passes a glob instead of a directory
+  (Node 24 treats a bare directory as a module path).
+
 ### Documentation
 
 - README rewritten as the English-first landing page: links to the Simplified Chinese
