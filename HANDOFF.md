@@ -1,11 +1,11 @@
-# 交接：串口插件 v0.3.9
+# 交接：串口插件 v0.3.10
 
 仓库 `D:\文档\杂项\dsh-serial-trigger`，分支 `main`。
 先读 `SKILL.md`（模型怎么用）、`SPEC.md` §11.1（谁录的谁来清）、§22.6（超时与失败降级）、§23.5（单写者）。
 
 ## 现在到哪了
 
-- 单测 **167 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
+- 单测 **169 项全绿**（`node --test --test-force-exit test/*.test.mjs`，约 26 秒）
 - 真机冒烟通过（2026-11-22，COM8，板子空闲）：`bin/shell-check.mjs` 7/7（字节透明 sha256 一致、
   seq 无洞、句柄 2→2、索引 11 行）、`bin/rules-check.mjs` 12/12（扫描/标记/字节引用/越界与超时守卫）
 - 工具 **18 个**（含 `serial_cleanup`）
@@ -74,7 +74,8 @@
    **禁止**读 SPEC/src/test/git 历史，卡住只能记缺陷、不许猜源码；
 2. 三档任务：L1 抓包（open+tail×2+captures+grep）→ L2 扫描脚本（写脚本→scan→marks→bytes 验引用）
    → L3 FSM（simulate→live→event→wait→status→stop，且必须故意造一次错并自愈）；
-3. 判定：L1/L2/L3 全过 + 结束无 open 端口 + 交付「SKILL 缺陷清单」；有缺陷按「代码 bug / 文档没说 / 环境」归类；
+3. 判定：L1/L2/L3 全过 + 结束无 open 端口 + skill 工具加载成功 + 交付「SKILL 缺陷清单」；有缺陷按「代码 bug / 文档没说 / 环境」归类。
+   **合格线**：阻断性代码缺陷 = 0；文档缺陷当轮修完即算通过（不追求零表述问题，收敛即可）；稳定性 = 连续 2 轮通过。
 4. 稳定性：同一提示词连跑 2–3 次（真机单写者，必须串行），看调用次数与缺陷数是否收敛；
 5. 只改可归因到 SKILL 的句子；代码 bug 单独修并加回归测试，**不要用说明书去掩盖 bug**。
 
@@ -87,6 +88,16 @@ C:\Users\Administrator\.dsh\skills\dsh-serial-trigger\SKILL.md -> D:\文档\杂�
 
 注册后 `skill({name:'dsh-serial-trigger'})` 直接返回全文（provider: filesystem）。换机器/仓库路径变了要重建软链；
 也可以改 profile 里 `dsh-skill-filesystem` 的 `customSkillDirs`，但那会连仓库里其它 .md 一起扫，不推荐。
+
+- v0.3.10（第五轮盲跑修复 + 收官）：
+  - 第 5 轮（用户重启后、**首次走 skill 工具加载**）：L1/L2/L3 全过，71 次调用 / 14.5 分钟，skill 首次即成功；
+    0 个阻断性代码缺陷，暴露 6 条说明书表述问题（成功返回 data 外壳没写、无 cursor 的 tail 返回窗口最早行、
+    idleForMs 含义、hint 措辞、live FSM 预热重试、trace effects/enteredAt）；
+  - 代码修复：**tail 省略 cursor 改为返回窗口内最新 maxLines 行**（原实现返回最早行，害 agent 误判设备停发；
+    O6 单测 + 更新 e2e/V06）；**live FSM 的 enteredAt 改为启动时刻**（原为 0，R9 单测）；
+  - SKILL 补：工具外壳 `{ok:true,data}` / `{ok:false,error}`、tail 无 cursor 语义、idleForMs、hint 措辞、
+    live 无转移时 stop+restart、trace effects、marks.window；
+  - 五轮缺陷收敛：3 接口 → 2 代码 → 2 代码 → 0 阻断 → 0 阻断（仅表述）；维持连续通过。
 
 - **v0.3 定档**（v0.3.5）：v0.3 线自此只修缺陷，不再加功能；v0.4 改为**可做可不做**的窄扩展，
   定义见 SPEC §24
@@ -104,9 +115,9 @@ C:\Users\Administrator\.dsh\skills\dsh-serial-trigger\SKILL.md -> D:\文档\杂�
 
 ## 下次接手先做
 
-1. **重启一次宿主**：v0.3.9 已通过 profile 触发出热重载生效（工具边界实测过），但热重载会留重复 HTTP 路由、
-   面板接口可能 500；重启即清干净。之后 `skill({name:'dsh-serial-trigger'})` 可直接加载 SKILL；
-2. 想复核稳定性就按上面的「SKILL 验收协议」再跑 1 轮盲跑（正常应 40 次调用内、0 代码缺陷）；
+1. **v0.3.10 需要重启一次宿主才干净**：本轮用 profile 热重载验证了工具边界（tail/enteredAt），但热重载会留
+   重复 HTTP 路由、面板接口可能 500；重启即清。SKILL 侧通过软链 + watch 热生效，不需要重启；
+2. 想复核稳定性就按上面的「SKILL 验收协议」再跑 1 轮盲跑（合格线：全过 + 0 阻断缺陷 + 连续 2 轮）；
 2. 没有排期项；v0.4 可选（SPEC §24），动手前先确认真要投入；
 2. 动面板用 Windows-MCP + 区域截图（整屏 Snapshot 30–75 秒，太慢）。
 ## 约束

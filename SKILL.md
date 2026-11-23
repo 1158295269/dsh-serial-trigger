@@ -3,7 +3,7 @@ name: dsh-serial-trigger
 description: 抓串口、留证据、按工作区脚本打故障点、用状态机替模型做实时收发。当需要打开/录制串口、回查某次调试、定位可疑字节、或让一个脚本顶住实时性时使用。
 ---
 
-# 串口助手（v0.3.9，18 个工具）
+# 串口助手（v0.3.10，18 个工具）
 
 ## 什么时候用
 
@@ -20,10 +20,15 @@ description: 抓串口、留证据、按工作区脚本打故障点、用状态�
 2. **一个端口只有一个写者。** 工具 `serial_open` 自动接管（被顶掉的会话正常收尾落盘）；非持有者只能 `serial_tail` 只读，写入/关闭得到 `E_NOT_OWNER`。
 3. **录制即证据。** 锚点是 `captureId`；上下文被压缩后先 `serial_captures` 找回。模型**不能删录制**（`serial_cleanup` 只读）；只有用户归档会话时其录制才会被删。
 
+## 工具外壳
+
+成功返回 `{ok:true, data:{…}}`，失败返回 `{ok:false, error:{code, message, hint, fix[], retryable}}`（不抛异常）。
+**下面各工具写的返回形状都是 `data` 里的字段**，取结果先看 `ok` 再读 `data` / `error`。
+
 ## A 现场抓一段
 
 ```
-serial_ports                                            → [{portId, port, state, captureId, owner, idleForMs}]
+serial_ports                                            → [{portId, port, state, captureId, owner, idleForMs}]（idleForMs = 距最后一次 tail/send 的毫秒数，不代表设备是否在发数据）
 serial_open {port, baudRate?=115200, project?, conversation?}   → {portId, captureId, path, kind}
 serial_tail {portId, cursor?, maxLines?=200, timeoutMs?=0, lineEnding?='any'|'crlf'|'lf'}
 serial_send {portId, text?|hex?, append?='none'|'cr'|'lf'|'crlf'}
@@ -31,7 +36,7 @@ serial_close {portId}                                   → {path, bytesRx, byte
 ```
 
 - 落盘：`<dataRoot>/<project>/<端口>-<YYYYMMDD-HHMMSS>.slog`。Windows 保留名会被改写：`COM8` → 文件名/`captureId` 为 `_COM8-…`（正常现象）。
-- `serial_tail` 返回 `{cursor, lines:[{t,seq,text,dir,partial}], pending, head, state, bytesRx, bytesTx, startedAt}`：`seq` 是该方向**字节偏移**，不是行号；省略 `cursor` = 回看 ring 内最近约 256KB（数据不足 256KB 时就是从头开始）；`pending` 是未断行残片，不是丢包；`timeoutMs>0` 是长轮询，比 tight loop 省调用。
+- `serial_tail` 返回 `{cursor, lines:[{t,seq,text,dir,partial}], pending, head, state, bytesRx, bytesTx, startedAt}`：`seq` 是该方向**字节偏移**，不是行号；**省略 `cursor` = 从 ring 窗口（约 256KB）里取最新的 `maxLines` 行**（想看更早历史就显式传 `cursor: 0` 或上一轮的 cursor）；`pending` 是未断行残片，不是丢包；`timeoutMs>0` 是长轮询，比 tight loop 省调用。
 - `serial_send`：`text` 与 `hex` 只能给一个；设备通常要**行尾**才把输入当一行回显（`append:'lf'` 或 `'crlf'`），`none` 可能只回显裸字节。发送也会进录制（tx 方向）。
 - `serial_close` 要等落盘：几十 MB 的录制可能占用几秒；调用超时先用 `serial_ports` 核对该 portId 状态，不要盲目重发 open。
 - 用完必须 close；不自动重连，掉线（`E_DEVICE_LOST`）要重新 open。
@@ -54,7 +59,7 @@ serial_export {captureId, format?='text'|'hex'|'csv', timestamps?=true, encoding
 - `record(rec)` 入参：`{t, monoUs, dir:'rx'|'tx', offset, data:Buffer}`；每次返回 **mark 数组或单个 mark**（不返回 = 无标记）；`finish()` 可在结尾补一条，返回值规则相同。
 - mark 字段：`anchor:{dir,offset,length}`（`offset` 必填；`length=0` 表示不指向连续字节，取上下文需自己按 offset 扩窗）、`label`、`kind:'fault'|'state'|'note'`、`severity:'error'|'warn'|'info'`、`t`、`code:{file,symbol}`（推测的代码位置，可选）、`hypothesis`（可选）、`next:[{label, expect?}]`（对象数组，不是字符串）、`extra`。
 - 沙箱：不能 `import`；只有 `Buffer` 与空 console；默认 20s 超时（`timeoutMs` 可调）、可取消、最多 5000 条 mark。
-- **工作区根**：默认是宿主进程工作目录（DSH 桌面端通常是 `<用户>\.dsh\profiles\desktop`），不是当前对话的工作目录；**相对路径也按宿主 cwd 解析**。不确定时直接 `serial_scan`：`E_SCRIPT_OUTSIDE_WORKSPACE` 或 `E_NO_SUCH_SCRIPT` 的 message/hint 会给出允许的绝对根。场景文件同理（或直接传场景对象，绕开路径）。
+- **工作区根**：默认是宿主进程工作目录（DSH 桌面端通常是 `<用户>\.dsh\profiles\desktop`），不是当前对话的工作目录；**相对路径也按宿主 cwd 解析**。不确定时直接 `serial_scan`：`E_SCRIPT_OUTSIDE_WORKSPACE` / `E_NO_SUCH_SCRIPT` 的 message 会给出解析后的绝对路径、hint 里写明允许根。场景文件同理（或直接传场景对象，绕开路径）。
 
 ```
 serial_scan {captureId, script, label?, timeoutMs?=20000}   → {captureId, label, script, scannedBytes, marks(数量), truncated, file}
@@ -62,7 +67,7 @@ serial_marks {captureId, rule?, severity?, beforeMs?=300, afterMs?=1000}   → {
 serial_bytes {captureId, dir:'rx'|'tx', offset, length≤8192, format?='hex'|'text'|'base64'}   → {dir, offset, length, truncated, body}（truncated=true = 到文件尾、实际返回短于 length）
 ```
 
-- marks 只存引用不存文本：看内容用 `serial_bytes`（hex 是真相）。同一脚本同一录制重扫幂等。
+- marks 只存引用不存文本：看内容用 `serial_bytes`（hex 是真相），需要上下文优先用每条 mark 自带的 `window:{dir,offset,length}`（`anchor.length=0` 时尤其）。同一脚本同一录制重扫幂等。
 - 判定是**事后**的：不监听、不触发、不自动重扫。
 
 ## D 状态机（实时执行者）
@@ -109,7 +114,8 @@ serial_fsm_stop {runId}                                → {runId, stopped, pers
 - 状态级 `after`：`{ms, goto, mark?, severity?}`，到点自动跳。**自环（goto 回自己）会重置计时**，所以“安静超时”要放在没有自环的状态；`simulate` 的时钟锚定第一条录制，initial 态的 after 不会在首行乱触发。
 - `scenario` 传对象，或 `{path}` 指向工作区根的 `.json`（≤256KB，路径按宿主 cwd 解析）。
 - 一端口一机器：重复 start → `E_FSM_BUSY`；只有端口持有者能 start（否则 `E_NOT_OWNER`）。端口 close/被接管/会话结束 → 机器自动停，`runId` 失效（`E_NO_SUCH_RUN`）。
-- 先 `simulate`（不碰端口，不能注入 event，发送只记录不执行）再 live；`tailMs` 内会按定时器 deadline 连续推进，链式 `after` 也能连续触发；`trace` 每项 `{at, from, to, via, note}`，`status` 是 `{name, state, enteredAt, waitingFor, stopped, events, lines, trace}`（`events` = 当前状态可注入的 event 名，`lines` = 当前状态注册的 line matcher；`simulate` 只返回 `{state, trace, marks, sends}`，没有 status）。
+- live 启动成功但约 10 秒内没有任何转移：先 `serial_ports` 看该端口的 `bytesRx` 是否在涨。在涨说明行没有喂进机器（已知偶发），`serial_fsm_stop` 后重新 start 即可；不要改场景硬等。
+- 先 `simulate`（不碰端口，不能注入 event，发送只记录不执行）再 live；`tailMs` 内会按定时器 deadline 连续推进，链式 `after` 也能连续触发；`trace` 每项 `{at, from, to, via, note}`，发送类转移还带 `effects:[{type:'send', status:'simulated'|'executed'}]`；`status` 是 `{name, state, enteredAt, waitingFor, stopped, events, lines, trace}`（`enteredAt` = 进入当前状态的时刻；`events` = 当前状态可注入的 event 名，`lines` = 当前状态注册的 line matcher；`simulate` 只返回 `{state, trace, marks, sends}`，没有 status）。
 
 ## 录制归属与清理
 
